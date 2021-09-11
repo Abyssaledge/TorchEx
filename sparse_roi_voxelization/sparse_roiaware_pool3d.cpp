@@ -1,7 +1,5 @@
 // Modified from
 // https://github.com/sshaoshuai/PCDet/blob/master/pcdet/ops/roiaware_pool3d/src/roiaware_pool3d_kernel.cu
-// Written by Shaoshuai Shi
-// All Rights Reserved 2019.
 
 #include <assert.h>
 #include <torch/extension.h>
@@ -21,6 +19,7 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
                               int out_z, const float *rois, const float *pts,
                               const float *pts_feature, int *argmax,
                               int *pts_idx_of_voxels, float *pooled_features,
+                              int *pooled_coors,
                               int pool_method,
                               int max_voxels
                               );
@@ -30,15 +29,16 @@ void roiaware_pool3d_backward_launcher(int boxes_num, int out_x, int out_y,
                                        int max_pts_each_voxel,
                                        const int *pts_idx_of_voxels,
                                        const int *argmax, const float *grad_out,
-                                       float *grad_in, int pool_method);
+                                       float *grad_in, int pool_method, int max_voxels);
 
 int roiaware_pool3d_gpu(at::Tensor rois, at::Tensor pts, at::Tensor pts_feature,
                         at::Tensor argmax, at::Tensor pts_idx_of_voxels,
-                        at::Tensor pooled_features, int pool_method);
+                        at::Tensor pooled_features, at::Tensor pooled_coors,
+                        int pool_method, int max_voxels);
 
 int roiaware_pool3d_gpu_backward(at::Tensor pts_idx_of_voxels,
                                  at::Tensor argmax, at::Tensor grad_out,
-                                 at::Tensor grad_in, int pool_method);
+                                 at::Tensor grad_in, int pool_method, int max_voxels);
 
 int points_in_boxes_cpu(at::Tensor boxes_tensor, at::Tensor pts_tensor,
                         at::Tensor pts_indices_tensor);
@@ -55,6 +55,7 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   at::Tensor argmax,
   at::Tensor pts_idx_of_voxels,
   at::Tensor pooled_features,
+  at::Tensor pooled_coors,
   int pool_method,
   std::tuple<int> roi_shape,
   ) {
@@ -63,7 +64,7 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   // params pts_feature: (npoints, C)
   // params argmax: (N, max_voxels, C)
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
-  // params pooled_features: (N, max_voxels, C)
+  // params pooled_features: (N, max_voxels, 3)
   // params pool_method: 0: max_pool 1: avg_pool
 
   CHECK_INPUT(rois);
@@ -72,6 +73,7 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   CHECK_INPUT(argmax);
   CHECK_INPUT(pts_idx_of_voxels);
   CHECK_INPUT(pooled_features);
+  CHECK_INPUT(pooled_coors);
 
   int boxes_num = rois.size(0);
   int pts_num = pts.size(0);
@@ -84,17 +86,22 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   assert((out_x < 256) && (out_y < 256) &&
          (out_z < 256));  // we encode index with 8bit
 
+  TORCH_CHECK(pooled_coors.size(2) == 3);
+
   const float *rois_data = rois.data_ptr<float>();
   const float *pts_data = pts.data_ptr<float>();
   const float *pts_feature_data = pts_feature.data_ptr<float>();
   int *argmax_data = argmax.data_ptr<int>();
   int *pts_idx_of_voxels_data = pts_idx_of_voxels.data_ptr<int>();
   float *pooled_features_data = pooled_features.data_ptr<float>();
+  int *pooled_coors_data = pooled_features.data_ptr<int>();
 
   roiaware_pool3d_launcher(
       boxes_num, pts_num, channels, max_pts_each_voxel, out_x, out_y, out_z,
       rois_data, pts_data, pts_feature_data, argmax_data,
-      pts_idx_of_voxels_data, pooled_features_data, pool_method, max_voxels);
+      pts_idx_of_voxels_data, pooled_features_data,
+      pooled_coors_data,
+      pool_method, max_voxels);
 
   return 1;
 }

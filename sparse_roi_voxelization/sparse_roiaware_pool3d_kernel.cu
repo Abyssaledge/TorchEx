@@ -1,7 +1,5 @@
 // Modified from
 // https://github.com/sshaoshuai/PCDet/blob/master/pcdet/ops/roiaware_pool3d/src/roiaware_pool3d_kernel.cu
-// Written by Shaoshuai Shi
-// All Rights Reserved 2019.
 
 #include <assert.h>
 #include <math.h>
@@ -95,10 +93,12 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                                              int out_y, int out_z,
                                              const int *pts_mask,
                                              int *pts_idx_of_voxels,
+                                             int *pooled_coors,
                                              int *hash_table) {
-  // Seems not efficient to parallel on voxels. It might be better to parallel on points with atomic operation on voxel.
+  // Seems not efficient to parallel on boxes. It might be better to parallel on points with atomic operation on voxel.
   // params pts_mask: (N, npoints)  0 or 1
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
+  // params pooled_coors: (N, max_voxels, 3)
   // params hash_table: (N, out_x * out_y * out_z)
 
   int box_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -120,17 +120,22 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                               z_idx;
       auto hash_offset = box_idx * out_x * out_y * out_z + hash_key;
       if (hash_table[hash_offset] == -1){
+        if (curr_voxel_sparse_ind == max_voxel) continue;
         hash_table[hash_offset] = curr_voxel_sparse_ind;
         curr_voxel_sparse_ind += 1;
       }
 
       auto in_box_sparse_offset = hash_table[hash_offset];
 
-      if (in_box_sparse_offset == max_voxels){
-        break;
+      assert (in_box_sparse_offset >=0 && in_box_sparse_offset < max_voxels);
+
+      auto pooled_coors_base = box_idx * max_voxels * 3 + in_box_sparse_offset * 3; 
+      if (pooled_coors[pooled_coors_base] < 0){
+        pooled_coors[pooled_coors_base + 0] = x_idx;
+        pooled_coors[pooled_coors_base + 1] = y_idx;
+        pooled_coors[pooled_coors_base + 2] = z_idx;
       }
 
-      assert (in_box_sparse_offset >=0 && in_box_sparse_offset < max_voxels);
       auto base_offset = box_idx * max_voxels * max_num_pts + in_box_sparse_offset * max_num_pts;
       
       unsigned int cnt = pts_idx_of_voxels[base_offset];
@@ -144,13 +149,14 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
 #endif
     }
   }
-  assert (curr_voxel_sparse_ind <= max_voxels+1);
+  assert (curr_voxel_sparse_ind <= max_voxels);
 }
 
 __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
                                    int max_pts_each_voxel, const float *pts_feature,
                                    const int *pts_idx_of_voxels,
-                                   float *pooled_features, int *argmax, int max_voxels) {
+                                   float *pooled_features,
+                                   int *argmax, int max_voxels) {
   // params pts_feature: (npoints, C)
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel),
   // index 0 is the counter params pooled_features: (N, max_voxels, C)
@@ -240,6 +246,7 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
                               int out_z, const float *rois, const float *pts,
                               const float *pts_feature, int *argmax,
                               int *pts_idx_of_voxels, float *pooled_features,
+                              int *pooled_coors,
                               int pool_method, int max_voxels) {
   // params rois: (N, 7) [x, y, z, w, l, h, rz] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
@@ -247,6 +254,7 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   // params argmax: (N, max_voxels, C)
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
   // params pooled_features: (N, max_voxels, C)
+  // params pooled_features: (N, max_voxels, 3)
   // params pool_method: 0: max_pool 1: avg_pool
   // params max_voxels: max number of voxels per roi
 
@@ -268,7 +276,7 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   dim3 blocks_collect(DIVUP(boxes_num, THREADS_PER_BLOCK));
   collect_inside_pts_for_box3d<<<blocks_collect, threads>>>(
       boxes_num, pts_num, max_pts_each_voxel, out_x, out_y, out_z, pts_mask,
-      pts_idx_of_voxels, hash_table);
+      pts_idx_of_voxels, pooled_coors, hash_table);
 
   dim3 blocks_pool(DIVUP(max_voxels, THREADS_PER_BLOCK), channels,
                    boxes_num);
