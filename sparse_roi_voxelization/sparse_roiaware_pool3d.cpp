@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <torch/extension.h>
 #include <torch/serialize/tensor.h>
+#include <tuple>
 
 #define CHECK_CUDA(x) \
   TORCH_CHECK(x.device().is_cuda(), #x, " must be a CUDAtensor ")
@@ -20,7 +21,9 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
                               int out_z, const float *rois, const float *pts,
                               const float *pts_feature, int *argmax,
                               int *pts_idx_of_voxels, float *pooled_features,
-                              int pool_method);
+                              int pool_method,
+                              int max_voxels
+                              );
 
 void roiaware_pool3d_backward_launcher(int boxes_num, int out_x, int out_y,
                                        int out_z, int channels,
@@ -46,15 +49,22 @@ int points_in_boxes_gpu(at::Tensor boxes_tensor, at::Tensor pts_tensor,
 int points_in_boxes_batch(at::Tensor boxes_tensor, at::Tensor pts_tensor,
                           at::Tensor box_idx_of_points_tensor);
 
-int roiaware_pool3d_gpu(at::Tensor rois, at::Tensor pts, at::Tensor pts_feature,
-                        at::Tensor argmax, at::Tensor pts_idx_of_voxels,
-                        at::Tensor pooled_features, int pool_method) {
+int roiaware_pool3d_gpu(at::Tensor rois,
+  at::Tensor pts,
+  at::Tensor pts_feature,
+  at::Tensor argmax,
+  at::Tensor pts_idx_of_voxels,
+  at::Tensor pooled_features,
+  int pool_method,
+  std::tuple<int> roi_shape,
+  int max_voxels
+  ) {
   // params rois: (N, 7) [x, y, z, w, l, h, ry] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
   // params pts_feature: (npoints, C)
-  // params argmax: (N, out_x, out_y, out_z, C)
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel)
-  // params pooled_features: (N, out_x, out_y, out_z, C)
+  // params argmax: (N, max_voxels, C)
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
+  // params pooled_features: (N, max_voxels, C)
   // params pool_method: 0: max_pool 1: avg_pool
 
   CHECK_INPUT(rois);
@@ -67,10 +77,10 @@ int roiaware_pool3d_gpu(at::Tensor rois, at::Tensor pts, at::Tensor pts_feature,
   int boxes_num = rois.size(0);
   int pts_num = pts.size(0);
   int channels = pts_feature.size(1);
-  int max_pts_each_voxel = pts_idx_of_voxels.size(4);  // index 0 is the counter
-  int out_x = pts_idx_of_voxels.size(1);
-  int out_y = pts_idx_of_voxels.size(2);
-  int out_z = pts_idx_of_voxels.size(3);
+  int max_pts_each_voxel = pts_idx_of_voxels.size(2);  // index 0 is the counter
+  int out_x = roi_shape[0];
+  int out_y = roi_shape[1];
+  int out_z = roi_shape[2];
   assert((out_x < 256) && (out_y < 256) &&
          (out_z < 256));  // we encode index with 8bit
 
@@ -84,7 +94,7 @@ int roiaware_pool3d_gpu(at::Tensor rois, at::Tensor pts, at::Tensor pts_feature,
   roiaware_pool3d_launcher(
       boxes_num, pts_num, channels, max_pts_each_voxel, out_x, out_y, out_z,
       rois_data, pts_data, pts_feature_data, argmax_data,
-      pts_idx_of_voxels_data, pooled_features_data, pool_method);
+      pts_idx_of_voxels_data, pooled_features_data, pool_method, max_voxels);
 
   return 1;
 }

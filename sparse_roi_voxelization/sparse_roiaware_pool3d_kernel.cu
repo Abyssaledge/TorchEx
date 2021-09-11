@@ -94,15 +94,19 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                                              int max_pts_each_voxel, int out_x,
                                              int out_y, int out_z,
                                              const int *pts_mask,
-                                             int *pts_idx_of_voxels) {
+                                             int *pts_idx_of_voxels,
+                                             int *hash_table) {
   // params pts_mask: (N, npoints)  0 or 1
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel)
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
+  // params hash_table: (N, out_x * out_y * out_z)
 
   int box_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (box_idx >= boxes_num) return;
 
   int max_num_pts = max_pts_each_voxel - 1;  // index 0 is the counter
-  pts_idx_of_voxels += box_idx * out_x * out_y * out_z * max_pts_each_voxel;
+  pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel;
+
+  unsigned int curr_voxel_sparse_ind = 0;
 
   for (int k = 0; k < pts_num; k++) {
     if (pts_mask[box_idx * pts_num + k] != -1) {
@@ -110,9 +114,24 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
       unsigned int x_idx = (idx_encoding >> 16) & 0xFF;
       unsigned int y_idx = (idx_encoding >> 8) & 0xFF;
       unsigned int z_idx = idx_encoding & 0xFF;
-      unsigned int base_offset = x_idx * out_y * out_z * max_pts_each_voxel +
-                                 y_idx * out_z * max_pts_each_voxel +
-                                 z_idx * max_pts_each_voxel;
+      unsigned int hash_key = x_idx * out_y * out_z +
+                              y_idx * out_z +
+                              z_idx;
+      auto hash_offset = box_idx * out_x * out_y * out_z + hash_key;
+      if (hash_table[hash_offset] == -1){
+        hash_table[hash_offset] = curr_voxel_sparse_ind;
+        curr_voxel_sparse_ind += 1;
+      }
+
+      auto in_box_sparse_offset = hash_table[hash_offset];
+
+      if (in_box_sparse_offset == max_voxels){
+        break;
+      }
+
+      assert (in_box_sparse_offset >=0 && in_box_sparse_offset < max_voxels);
+      auto base_offset = box_idx * max_voxels * max_num_pts + in_box_sparse_offset * max_num_pts;
+      
       unsigned int cnt = pts_idx_of_voxels[base_offset];
       if (cnt < max_num_pts) {
         pts_idx_of_voxels[base_offset + cnt + 1] = k;
@@ -124,27 +143,24 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
 #endif
     }
   }
+  assert (curr_voxel_sparse_ind <= max_voxels+1);
 }
 
 __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
-                                   int max_pts_each_voxel, int out_x, int out_y,
-                                   int out_z, const float *pts_feature,
+                                   int max_pts_each_voxel, const float *pts_feature,
                                    const int *pts_idx_of_voxels,
-                                   float *pooled_features, int *argmax) {
+                                   float *pooled_features, int *argmax, int max_voxels) {
   // params pts_feature: (npoints, C)
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel),
-  // index 0 is the counter params pooled_features: (N, out_x, out_y, out_z, C)
-  // params argmax: (N, out_x, out_y, out_z, C)
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel),
+  // index 0 is the counter params pooled_features: (N, max_voxels, C)
+  // params argmax: (N, max_voxels, C)
 
   int box_idx = blockIdx.z;
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  int x_idx = voxel_idx_flat / (out_y * out_z);
-  int y_idx = (voxel_idx_flat - x_idx * (out_y * out_z)) / out_z;
-  int z_idx = voxel_idx_flat % out_z;
-  if (box_idx >= boxes_num || channel_idx >= channels || x_idx >= out_x ||
-      y_idx >= out_y || z_idx >= out_z)
+  assert(voxel_idx_flat < max_voxels)
+  if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 
 #ifdef DEBUG
@@ -152,13 +168,12 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
          argmax);
 #endif
 
-  int offset_base = x_idx * out_y * out_z + y_idx * out_z + z_idx;
-  pts_idx_of_voxels += box_idx * out_x * out_y * out_z * max_pts_each_voxel +
-                       offset_base * max_pts_each_voxel;
-  pooled_features += box_idx * out_x * out_y * out_z * channels +
-                     offset_base * channels + channel_idx;
-  argmax += box_idx * out_x * out_y * out_z * channels +
-            offset_base * channels + channel_idx;
+  pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel +
+                       voxel_idx_flat * max_pts_each_voxel;
+  pooled_features += box_idx * max_voxels * channels +
+                     voxel_idx_flat * channels + channel_idx;
+  argmax += box_idx * max_voxels * channels +
+            voxel_idx_flat * channels + channel_idx;
 
   int argmax_idx = -1;
   float max_val = -1e50;
@@ -187,31 +202,25 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
 }
 
 __global__ void roiaware_avgpool3d(int boxes_num, int pts_num, int channels,
-                                   int max_pts_each_voxel, int out_x, int out_y,
-                                   int out_z, const float *pts_feature,
+                                   int max_pts_each_voxel, const float *pts_feature,
                                    const int *pts_idx_of_voxels,
-                                   float *pooled_features) {
+                                   float *pooled_features, int max_voxels) {
   // params pts_feature: (npoints, C)
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel),
-  // index 0 is the counter params pooled_features: (N, out_x, out_y, out_z, C)
-  // params argmax: (N, out_x, out_y, out_z, C)
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel),
+  // index 0 is the counter params pooled_features: (N, max_voxels, C)
 
   int box_idx = blockIdx.z;
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  int x_idx = voxel_idx_flat / (out_y * out_z);
-  int y_idx = (voxel_idx_flat - x_idx * (out_y * out_z)) / out_z;
-  int z_idx = voxel_idx_flat % out_z;
-  if (box_idx >= boxes_num || channel_idx >= channels || x_idx >= out_x ||
-      y_idx >= out_y || z_idx >= out_z)
+  assert(voxel_idx_flat < max_voxels)
+  if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 
-  int offset_base = x_idx * out_y * out_z + y_idx * out_z + z_idx;
-  pts_idx_of_voxels += box_idx * out_x * out_y * out_z * max_pts_each_voxel +
-                       offset_base * max_pts_each_voxel;
-  pooled_features += box_idx * out_x * out_y * out_z * channels +
-                     offset_base * channels + channel_idx;
+  pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel +
+                       voxel_idx_flat * max_pts_each_voxel;
+  pooled_features += box_idx * max_voxels * channels +
+                     voxel_idx_flat * channels + channel_idx;
 
   float sum_val = 0;
   int total_pts = pts_idx_of_voxels[0];
@@ -230,18 +239,23 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
                               int out_z, const float *rois, const float *pts,
                               const float *pts_feature, int *argmax,
                               int *pts_idx_of_voxels, float *pooled_features,
-                              int pool_method) {
+                              int pool_method, int max_voxels) {
   // params rois: (N, 7) [x, y, z, w, l, h, rz] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
   // params pts_feature: (npoints, C)
-  // params argmax: (N, out_x, out_y, out_z, C)
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel)
-  // params pooled_features: (N, out_x, out_y, out_z, C)
+  // params argmax: (N, max_voxels, C)
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
+  // params pooled_features: (N, max_voxels, C)
   // params pool_method: 0: max_pool 1: avg_pool
+  // params max_voxels: max number of voxels per roi
 
   int *pts_mask = NULL;
   cudaMalloc(&pts_mask, boxes_num * pts_num * sizeof(int));  // (N, M)
   cudaMemset(pts_mask, -1, boxes_num * pts_num * sizeof(int));
+
+  int *hash_table = NULL;
+  cudaMalloc(&hash_table, boxes_num * out_x * out_y * out_z * sizeof(int));  // (N, M)
+  cudaMemset(hash_table, -1, boxes_num * out_x * out_y * out_z * sizeof(int));
 
   dim3 blocks_mask(DIVUP(pts_num, THREADS_PER_BLOCK), boxes_num);
   dim3 threads(THREADS_PER_BLOCK);
@@ -253,18 +267,18 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   dim3 blocks_collect(DIVUP(boxes_num, THREADS_PER_BLOCK));
   collect_inside_pts_for_box3d<<<blocks_collect, threads>>>(
       boxes_num, pts_num, max_pts_each_voxel, out_x, out_y, out_z, pts_mask,
-      pts_idx_of_voxels);
+      pts_idx_of_voxels, hash_table);
 
-  dim3 blocks_pool(DIVUP(out_x * out_y * out_z, THREADS_PER_BLOCK), channels,
+  dim3 blocks_pool(DIVUP(max_voxels, THREADS_PER_BLOCK), channels,
                    boxes_num);
   if (pool_method == 0) {
     roiaware_maxpool3d<<<blocks_pool, threads>>>(
-        boxes_num, pts_num, channels, max_pts_each_voxel, out_x, out_y, out_z,
-        pts_feature, pts_idx_of_voxels, pooled_features, argmax);
+        boxes_num, pts_num, channels, max_pts_each_voxel, 
+        pts_feature, pts_idx_of_voxels, pooled_features, argmax, max_voxels);
   } else if (pool_method == 1) {
     roiaware_avgpool3d<<<blocks_pool, threads>>>(
-        boxes_num, pts_num, channels, max_pts_each_voxel, out_x, out_y, out_z,
-        pts_feature, pts_idx_of_voxels, pooled_features);
+        boxes_num, pts_num, channels, max_pts_each_voxel,
+        pts_feature, pts_idx_of_voxels, pooled_features, max_voxels);
   }
 
   cudaFree(pts_mask);
