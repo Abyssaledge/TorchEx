@@ -57,7 +57,6 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   at::Tensor pooled_features,
   int pool_method,
   std::tuple<int> roi_shape,
-  int max_voxels
   ) {
   // params rois: (N, 7) [x, y, z, w, l, h, ry] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
@@ -81,6 +80,7 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   int out_x = roi_shape[0];
   int out_y = roi_shape[1];
   int out_z = roi_shape[2];
+  int max_voxels = pooled_features.size(1);
   assert((out_x < 256) && (out_y < 256) &&
          (out_z < 256));  // we encode index with 8bit
 
@@ -99,12 +99,17 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   return 1;
 }
 
-int roiaware_pool3d_gpu_backward(at::Tensor pts_idx_of_voxels,
-                                 at::Tensor argmax, at::Tensor grad_out,
-                                 at::Tensor grad_in, int pool_method) {
-  // params pts_idx_of_voxels: (N, out_x, out_y, out_z, max_pts_each_voxel)
-  // params argmax: (N, out_x, out_y, out_z, C)
-  // params grad_out: (N, out_x, out_y, out_z, C)
+int roiaware_pool3d_gpu_backward(
+  at::Tensor pts_idx_of_voxels,
+  at::Tensor argmax,
+  at::Tensor grad_out,
+  at::Tensor grad_in,
+  int pool_method,
+  std::tuple<int> roi_shape,
+  ) {
+  // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
+  // params argmax: (N, max_voxels, C)
+  // params grad_out: (N, max_voxels, C)
   // params grad_in: (npoints, C), return value
   // params pool_method: 0: max_pool 1: avg_pool
 
@@ -114,11 +119,12 @@ int roiaware_pool3d_gpu_backward(at::Tensor pts_idx_of_voxels,
   CHECK_INPUT(grad_in);
 
   int boxes_num = pts_idx_of_voxels.size(0);
-  int out_x = pts_idx_of_voxels.size(1);
-  int out_y = pts_idx_of_voxels.size(2);
-  int out_z = pts_idx_of_voxels.size(3);
-  int max_pts_each_voxel = pts_idx_of_voxels.size(4);  // index 0 is the counter
-  int channels = grad_out.size(4);
+  int out_x = roi_shape[0];
+  int out_y = roi_shape[1];
+  int out_z = roi_shape[2];
+  int max_pts_each_voxel = pts_idx_of_voxels.size(2);  // index 0 is the counter
+  int channels = grad_out.size(2);
+  int max_voxels = grad_out.size(1);
 
   const int *pts_idx_of_voxels_data = pts_idx_of_voxels.data_ptr<int>();
   const int *argmax_data = argmax.data_ptr<int>();
@@ -128,7 +134,7 @@ int roiaware_pool3d_gpu_backward(at::Tensor pts_idx_of_voxels,
   roiaware_pool3d_backward_launcher(boxes_num, out_x, out_y, out_z, channels,
                                     max_pts_each_voxel, pts_idx_of_voxels_data,
                                     argmax_data, grad_out_data, grad_in_data,
-                                    pool_method);
+                                    pool_method, max_voxels);
 
   return 1;
 }
