@@ -94,7 +94,9 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                                              const int *pts_mask,
                                              int *pts_idx_of_voxels,
                                              int *pooled_coors,
-                                             int *hash_table) {
+                                             int *hash_table,
+                                             int max_voxels
+  ) {
   // Seems not efficient to parallel on boxes. It might be better to parallel on points with atomic operation on voxel.
   // params pts_mask: (N, npoints)  0 or 1
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
@@ -120,7 +122,7 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                               z_idx;
       auto hash_offset = box_idx * out_x * out_y * out_z + hash_key;
       if (hash_table[hash_offset] == -1){
-        if (curr_voxel_sparse_ind == max_voxel) continue;
+        if (curr_voxel_sparse_ind == max_voxels) continue;
         hash_table[hash_offset] = curr_voxel_sparse_ind;
         curr_voxel_sparse_ind += 1;
       }
@@ -166,7 +168,7 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels)
+  assert(voxel_idx_flat < max_voxels);
   if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 
@@ -220,7 +222,7 @@ __global__ void roiaware_avgpool3d(int boxes_num, int pts_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels)
+  assert(voxel_idx_flat < max_voxels);
   if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 
@@ -276,7 +278,7 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   dim3 blocks_collect(DIVUP(boxes_num, THREADS_PER_BLOCK));
   collect_inside_pts_for_box3d<<<blocks_collect, threads>>>(
       boxes_num, pts_num, max_pts_each_voxel, out_x, out_y, out_z, pts_mask,
-      pts_idx_of_voxels, pooled_coors, hash_table);
+      pts_idx_of_voxels, pooled_coors, hash_table, max_voxels);
 
   dim3 blocks_pool(DIVUP(max_voxels, THREADS_PER_BLOCK), channels,
                    boxes_num);
@@ -309,11 +311,11 @@ __global__ void roiaware_maxpool3d_backward(int boxes_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels)
+  assert(voxel_idx_flat < max_voxels);
   if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 
-  argmax += box_idx * max_voxel * channels +
+  argmax += box_idx * max_voxels * channels +
             voxel_idx_flat * channels + channel_idx;
   grad_out += box_idx * max_voxels * channels +
               voxel_idx_flat * channels + channel_idx;
@@ -336,7 +338,7 @@ __global__ void roiaware_avgpool3d_backward(int boxes_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels)
+  assert(voxel_idx_flat < max_voxels);
   if (box_idx >= boxes_num || channel_idx >= channels)
     return;
 

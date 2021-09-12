@@ -4,7 +4,7 @@
 #include <assert.h>
 #include <torch/extension.h>
 #include <torch/serialize/tensor.h>
-#include <tuple>
+#include <vector>
 
 #define CHECK_CUDA(x) \
   TORCH_CHECK(x.device().is_cuda(), #x, " must be a CUDAtensor ")
@@ -34,11 +34,11 @@ void roiaware_pool3d_backward_launcher(int boxes_num, int out_x, int out_y,
 int roiaware_pool3d_gpu(at::Tensor rois, at::Tensor pts, at::Tensor pts_feature,
                         at::Tensor argmax, at::Tensor pts_idx_of_voxels,
                         at::Tensor pooled_features, at::Tensor pooled_coors,
-                        int pool_method, int max_voxels);
+                        int pool_method, std::vector<int> roi_shape);
 
 int roiaware_pool3d_gpu_backward(at::Tensor pts_idx_of_voxels,
                                  at::Tensor argmax, at::Tensor grad_out,
-                                 at::Tensor grad_in, int pool_method, int max_voxels);
+                                 at::Tensor grad_in, int pool_method, std::vector<int> roi_shape);
 
 int points_in_boxes_cpu(at::Tensor boxes_tensor, at::Tensor pts_tensor,
                         at::Tensor pts_indices_tensor);
@@ -57,7 +57,7 @@ int roiaware_pool3d_gpu(at::Tensor rois,
   at::Tensor pooled_features,
   at::Tensor pooled_coors,
   int pool_method,
-  std::tuple<int> roi_shape,
+  std::vector<int> roi_shape
   ) {
   // params rois: (N, 7) [x, y, z, w, l, h, ry] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
@@ -112,7 +112,7 @@ int roiaware_pool3d_gpu_backward(
   at::Tensor grad_out,
   at::Tensor grad_in,
   int pool_method,
-  std::tuple<int> roi_shape,
+  std::vector<int> roi_shape
   ) {
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
   // params argmax: (N, max_voxels, C)
@@ -150,10 +150,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("forward", &roiaware_pool3d_gpu, "roiaware pool3d forward (CUDA)");
   m.def("backward", &roiaware_pool3d_gpu_backward,
         "roiaware pool3d backward (CUDA)");
-  m.def("points_in_boxes_gpu", &points_in_boxes_gpu,
-        "points_in_boxes_gpu forward (CUDA)");
-  m.def("points_in_boxes_batch", &points_in_boxes_batch,
-        "points_in_boxes_batch forward (CUDA)");
-  m.def("points_in_boxes_cpu", &points_in_boxes_cpu,
-        "points_in_boxes_cpu forward (CPU)");
+  // m.def("points_in_boxes_gpu", &points_in_boxes_gpu,
+  //       "points_in_boxes_gpu forward (CUDA)");
+  // m.def("points_in_boxes_batch", &points_in_boxes_batch,
+  //       "points_in_boxes_batch forward (CUDA)");
+  // m.def("points_in_boxes_cpu", &points_in_boxes_cpu,
+  //       "points_in_boxes_cpu forward (CPU)");
 }
