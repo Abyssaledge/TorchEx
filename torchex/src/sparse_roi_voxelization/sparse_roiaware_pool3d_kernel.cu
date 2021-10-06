@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <torch/serialize/tensor.h>
 #include <torch/types.h>
+#include "utils/error.cuh"
 
 #define THREADS_PER_BLOCK 256
 #define DIVUP(m, n) ((m) / (n) + ((m) % (n) > 0))
@@ -76,13 +77,6 @@ __global__ void generate_pts_mask_for_box3d(int boxes_num, int pts_num,
     z_idx = min(max(z_idx, 0), out_z - 1);
 
     unsigned int idx_encoding = (x_idx << 16) + (y_idx << 8) + z_idx;
-#ifdef DEBUG
-    printf(
-        "mask: pts_%d(%.3f, %.3f, %.3f), local(%.3f, %.3f, %.3f), idx(%d, %d, "
-        "%d), res(%.3f, %.3f, %.3f), idx_encoding=%x\n",
-        pt_idx, pts[0], pts[1], pts[2], local_x, local_y, local_z, x_idx, y_idx,
-        z_idx, x_res, y_res, z_res, idx_encoding);
-#endif
 
     pts_mask[0] = idx_encoding;
   }
@@ -107,7 +101,7 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
   if (box_idx >= boxes_num) return;
 
   int max_num_pts = max_pts_each_voxel - 1;  // index 0 is the counter
-  pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel;
+  // pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel;
 
   unsigned int curr_voxel_sparse_ind = 0;
 
@@ -121,6 +115,12 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
                               y_idx * out_z +
                               z_idx;
       auto hash_offset = box_idx * out_x * out_y * out_z + hash_key;
+
+      #ifdef DEBUG
+      assert(hash_key < out_x * out_y * out_z);
+      assert(hash_offset < boxes_num * out_x * out_y * out_z);
+      #endif
+
       if (hash_table[hash_offset] == -1){
         if (curr_voxel_sparse_ind == max_voxels) continue;
         hash_table[hash_offset] = curr_voxel_sparse_ind;
@@ -129,29 +129,36 @@ __global__ void collect_inside_pts_for_box3d(int boxes_num, int pts_num,
 
       auto in_box_sparse_offset = hash_table[hash_offset];
 
-      assert (in_box_sparse_offset >=0 && in_box_sparse_offset < max_voxels);
 
       auto pooled_coors_base = box_idx * max_voxels * 3 + in_box_sparse_offset * 3; 
+
+      #ifdef DEBUG
+      assert (in_box_sparse_offset >=0 && in_box_sparse_offset < max_voxels);
+      assert(pooled_coors_base + 2 < boxes_num * max_voxels * 3);
+      #endif
+
       if (pooled_coors[pooled_coors_base] < 0){
         pooled_coors[pooled_coors_base + 0] = x_idx;
         pooled_coors[pooled_coors_base + 1] = y_idx;
         pooled_coors[pooled_coors_base + 2] = z_idx;
       }
 
-      auto base_offset = box_idx * max_voxels * max_num_pts + in_box_sparse_offset * max_num_pts;
+      auto base_offset = box_idx * max_voxels * max_pts_each_voxel + in_box_sparse_offset * max_pts_each_voxel;
+      #ifdef DEBUG
+      assert(base_offset + max_num_pts < boxes_num * max_voxels * max_pts_each_voxel && base_offset >= 0);
+      #endif
       
       unsigned int cnt = pts_idx_of_voxels[base_offset];
+      assert(cnt >= 0);
       if (cnt < max_num_pts) {
         pts_idx_of_voxels[base_offset + cnt + 1] = k;
         pts_idx_of_voxels[base_offset]++;
+        // pts_idx_of_voxels[0] = 1;
       }
-#ifdef DEBUG
-      printf("collect: pts_%d, idx(%d, %d, %d), idx_encoding=%x\n", k, x_idx,
-             y_idx, z_idx, idx_encoding);
-#endif
     }
   }
   assert (curr_voxel_sparse_ind <= max_voxels);
+
 }
 
 __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
@@ -168,14 +175,9 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels);
-  if (box_idx >= boxes_num || channel_idx >= channels)
+  if (box_idx >= boxes_num || channel_idx >= channels || voxel_idx_flat >= max_voxels)
     return;
 
-#ifdef DEBUG
-  printf("src pts_idx_of_voxels: (%p, ), argmax: %p\n", pts_idx_of_voxels,
-         argmax);
-#endif
 
   pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel +
                        voxel_idx_flat * max_pts_each_voxel;
@@ -190,9 +192,11 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
   int total_pts = pts_idx_of_voxels[0];
 
   for (int k = 1; k <= total_pts; k++) {
-    if (pts_feature[pts_idx_of_voxels[k] * channels + channel_idx] > max_val) {
-      max_val = pts_feature[pts_idx_of_voxels[k] * channels + channel_idx];
-      argmax_idx = pts_idx_of_voxels[k];
+    auto curr_pts_idx = pts_idx_of_voxels[k]; 
+    float curr_feat = pts_feature[curr_pts_idx * channels + channel_idx];
+    if (curr_feat > max_val) {
+      max_val = curr_feat;
+      argmax_idx = curr_pts_idx;
     }
   }
 
@@ -201,13 +205,6 @@ __global__ void roiaware_maxpool3d(int boxes_num, int pts_num, int channels,
   }
   argmax[0] = argmax_idx;
 
-#ifdef DEBUG
-  printf(
-      "channel_%d idx(%d, %d, %d), argmax_idx=(%d, %.3f), total=%d, after "
-      "pts_idx: %p, argmax: (%p, %d)\n",
-      channel_idx, x_idx, y_idx, z_idx, argmax_idx, max_val, total_pts,
-      pts_idx_of_voxels, argmax, argmax_idx);
-#endif
 }
 
 __global__ void roiaware_avgpool3d(int boxes_num, int pts_num, int channels,
@@ -222,8 +219,7 @@ __global__ void roiaware_avgpool3d(int boxes_num, int pts_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels);
-  if (box_idx >= boxes_num || channel_idx >= channels)
+  if (box_idx >= boxes_num || channel_idx >= channels || voxel_idx_flat >= max_voxels)
     return;
 
   pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel +
@@ -256,22 +252,29 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   // params argmax: (N, max_voxels, C)
   // params pts_idx_of_voxels: (N, max_voxels, max_pts_each_voxel)
   // params pooled_features: (N, max_voxels, C)
-  // params pooled_features: (N, max_voxels, 3)
+  // params pooled_coors: (N, max_voxels, 3)
   // params pool_method: 0: max_pool 1: avg_pool
   // params max_voxels: max number of voxels per roi
+  #ifdef DEBUG
+  printf("********* Line %d, File %s *********\n", __LINE__, __FILE__);
+  #endif
 
   int *pts_mask = NULL;
   cudaMalloc(&pts_mask, boxes_num * pts_num * sizeof(int));  // (N, M)
-  cudaMemset(pts_mask, -1, boxes_num * pts_num * sizeof(int));
+  CHECK_CALL(cudaMemset(pts_mask, -1, boxes_num * pts_num * sizeof(int)));
 
   int *hash_table = NULL;
-  cudaMalloc(&hash_table, boxes_num * out_x * out_y * out_z * sizeof(int));  // (N, M)
-  cudaMemset(hash_table, -1, boxes_num * out_x * out_y * out_z * sizeof(int));
+  CHECK_CALL(cudaMalloc(&hash_table, boxes_num * out_x * out_y * out_z * sizeof(int)));  // (N, M)
+  CHECK_CALL(cudaMemset(hash_table, -1, boxes_num * out_x * out_y * out_z * sizeof(int)));
 
   dim3 blocks_mask(DIVUP(pts_num, THREADS_PER_BLOCK), boxes_num);
   dim3 threads(THREADS_PER_BLOCK);
-  generate_pts_mask_for_box3d<<<blocks_mask, threads>>>(
+    generate_pts_mask_for_box3d<<<blocks_mask, threads>>>(
       boxes_num, pts_num, out_x, out_y, out_z, rois, pts, pts_mask);
+  #ifdef DEBUG
+  CHECK_CALL(cudaGetLastError());
+  CHECK_CALL(cudaDeviceSynchronize());
+  #endif
 
   // TODO: Merge the collect and pool functions, SS
 
@@ -279,6 +282,10 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
   collect_inside_pts_for_box3d<<<blocks_collect, threads>>>(
       boxes_num, pts_num, max_pts_each_voxel, out_x, out_y, out_z, pts_mask,
       pts_idx_of_voxels, pooled_coors, hash_table, max_voxels);
+  #ifdef DEBUG
+  CHECK_CALL(cudaGetLastError());
+  CHECK_CALL(cudaDeviceSynchronize());
+  #endif
 
   dim3 blocks_pool(DIVUP(max_voxels, THREADS_PER_BLOCK), channels,
                    boxes_num);
@@ -291,8 +298,13 @@ void roiaware_pool3d_launcher(int boxes_num, int pts_num, int channels,
         boxes_num, pts_num, channels, max_pts_each_voxel,
         pts_feature, pts_idx_of_voxels, pooled_features, max_voxels);
   }
+  #ifdef DEBUG
+  CHECK_CALL(cudaGetLastError());
+  CHECK_CALL(cudaDeviceSynchronize());
+  #endif
 
-  cudaFree(pts_mask);
+  CHECK_CALL(cudaFree(pts_mask));
+  CHECK_CALL(cudaFree(hash_table));
 
 #ifdef DEBUG
   cudaDeviceSynchronize();  // for using printf in kernel function
@@ -311,8 +323,7 @@ __global__ void roiaware_maxpool3d_backward(int boxes_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels);
-  if (box_idx >= boxes_num || channel_idx >= channels)
+  if (box_idx >= boxes_num || channel_idx >= channels || voxel_idx_flat >= max_voxels)
     return;
 
   argmax += box_idx * max_voxels * channels +
@@ -338,8 +349,7 @@ __global__ void roiaware_avgpool3d_backward(int boxes_num, int channels,
   int channel_idx = blockIdx.y;
   int voxel_idx_flat = blockIdx.x * blockDim.x + threadIdx.x;
 
-  assert(voxel_idx_flat < max_voxels);
-  if (box_idx >= boxes_num || channel_idx >= channels)
+  if (box_idx >= boxes_num || channel_idx >= channels || voxel_idx_flat >= max_voxels)
     return;
 
   pts_idx_of_voxels += box_idx * max_voxels * max_pts_each_voxel +
