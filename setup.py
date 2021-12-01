@@ -8,6 +8,11 @@ setup(
     author='Lve Fan',
     ext_modules=[
         CUDAExtension(
+            'weighted_nms', 
+            ['./torchex/src/weighted_nms/wnms.cpp',
+             './torchex/src/weighted_nms/wnms_kernel.cu',]
+        ),
+        CUDAExtension(
             'sparse_roi_voxelization', 
             ['./torchex/src/sparse_roi_voxelization/sparse_roiaware_pool3d.cpp',
              './torchex/src/sparse_roi_voxelization/sparse_roiaware_pool3d_kernel.cu',]
