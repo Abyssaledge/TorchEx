@@ -318,6 +318,33 @@ __device__ inline float get_min_angle_diff(float angle_diff)
         else if (angle_diff > M_PI/2) return angle_diff-M_PI;
         else return angle_diff;
 }
+__device__ inline float get_old_angle_diff(float angle_diff){
+  return fmodf(fabsf(angle_diff), float(2 * 3.1415926));
+}
+
+// __device__ inline float get_min_angle_diff(float angle_diff)
+// {
+//         angle_diff = fmodf(angle_diff, static_cast<float>(M_PI));
+//         if (angle_diff < M_PI/-2) return angle_diff+M_PI;
+//         else if (angle_diff > M_PI/2) return angle_diff-M_PI;
+//         else return angle_diff;
+// }
+__device__ void sort(float *a, int n){
+
+  float temp = 0;
+  for(int i=0;i<n-1;i++)                                                             
+  {                                                                              
+    for(int j=0; j<n-i-1; j++)                                                       
+    {                                                                            
+      if(a[j]<a[j+1])                                                             
+      {                                                                           
+        temp = a[j];                                                               
+        a[j] = a[j+1];                                                             
+        a[j+1] = temp;                                                             
+      }                                                                           
+    }                                                                            
+  }
+}
 
 __global__ void wnms_merge_kernel(
   const int boxes_num,
@@ -326,23 +353,67 @@ __global__ void wnms_merge_kernel(
   const float *data2merge,
   const int data_dim,
   const long* keep_idx,
+  long* count,
   const unsigned long long *mask,
-  float* output_data) {
+  float* output_data
+  ) {
 
   int index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= keep_num) return;
-  const int col_blocks = DIVUP(boxes_num, THREADS_PER_BLOCK_NMS);
   long cur_box_idx = keep_idx[index];
+  // long cur_box_idx = 0;
+  if (cur_box_idx < 0) return;
+  const int col_blocks = DIVUP(boxes_num, THREADS_PER_BLOCK_NMS);
+
   int col_start = cur_box_idx / THREADS_PER_BLOCK_NMS;
   const unsigned long long* cur_mask = mask + cur_box_idx * col_blocks;
-  // init merged boxes, attention: mask[i,i] is 0
-  float cur_score = data2merge[cur_box_idx * data_dim + data_dim - 1];
-  // float score_sum = cur_score;
+
+  // find the approximate media yaw
+  float median_yaw = boxes[cur_box_idx * 5 + 4];
+  // float median_yaw = data2merge[cur_box_idx * data_dim + 8];
+  float yaw_list[200];
+  for (int i = 0; i<200; i++){ yaw_list[i] = -1000;}
+
+  int median_counter = 0;
+  for(int col=col_start; (col < col_blocks) && (median_counter < 200); col++){
+    const unsigned long long cur_block_mask = cur_mask[col];
+    if (cur_block_mask > 0) {
+      for(int j=0; j<THREADS_PER_BLOCK_NMS; j++){
+        if ( cur_block_mask & (1ULL << j) ){
+          int target_data_idx = col * THREADS_PER_BLOCK_NMS + j;
+          float target_yaw = boxes[target_data_idx * 5 + 4];
+          // float target_yaw = data2merge[target_data_idx * data_dim + 8];
+          if(median_counter<200){
+            yaw_list[median_counter] = target_yaw;
+            median_counter++;
+          }
+          else{
+            break;
+          }
+        }
+      }
+    }
+  }
+  assert(median_counter <= 200);
+  if (median_counter > 2){
+    sort(yaw_list, median_counter);
+    assert(yaw_list[0] >= yaw_list[1]);
+    assert(yaw_list[1] >= yaw_list[2]);
+    median_yaw = yaw_list[median_counter / 2];
+  }
+  assert(median_yaw != -1000);
+  
+  // merging
 
   float* cur_merged_data = output_data + index * data_dim;
 
-  // float cur_score = data2merge[cur_box_idx * data_dim + data_dim - 1];
-  for(int d=0; d < data_dim; d++) {
+  float cur_score = data2merge[cur_box_idx * data_dim + data_dim - 1];
+  float score_sum = cur_score;
+  // float cur_yaw = boxes[cur_box_idx * 5 + 4];
+
+
+  count[index] = 1;
+  for(int d=0; d < data_dim-1; d++) {
     cur_merged_data[d] = data2merge[cur_box_idx * data_dim + d] * cur_score;
   }
   for(int col=col_start; col < col_blocks; col++){
@@ -351,26 +422,26 @@ __global__ void wnms_merge_kernel(
       for(int j=0; j<THREADS_PER_BLOCK_NMS; j++){
         if ( cur_block_mask & (1ULL << j) ){
           int target_data_idx = col * THREADS_PER_BLOCK_NMS + j;
-          float angle_diff = boxes[target_data_idx * 5 + 4] - boxes[cur_box_idx * 5 + 4]; // TODO: use median yaw
-          angle_diff = get_min_angle_diff(angle_diff);
+          float angle_diff = boxes[target_data_idx * 5 + 4] - median_yaw;
+          angle_diff = get_old_angle_diff(angle_diff);
           if (fabsf(angle_diff) < 0.3) {
               float score = data2merge[target_data_idx * data_dim + data_dim - 1];
-              for(int d = 0; d < data_dim; d++){
+              for(int d = 0; d < data_dim-1; d++){
                 cur_merged_data[d] += (data2merge[target_data_idx * data_dim + d] * score);
               }
-              // cur_merged_data[6] += (boxes[cur_box_idx*8 + 6] + angle_diff)*score;
-              // score_sum += score;
+              score_sum += score;
+              count[index]++;
           }
         }
       }
     }
   }
   // update boxes value with merged boxes
-  float score_sum = cur_merged_data[data_dim-1];
-  for(int d = 0; d < data_dim; d++){
+  for(int d = 0; d < data_dim-1; d++){
     cur_merged_data[d] = cur_merged_data[d] / score_sum;
   }
-  assert(cur_merged_data[data_dim-1] <= 1 + 1e-4);
+  cur_merged_data[data_dim-1] = cur_score;
+  assert(score_sum / static_cast<float>(count[index]) <= cur_score + 1e-3);
 }
 
 int fill_keep_data(const std::vector<unsigned long long> mask_cpu, long *keep_data, int boxes_num){
@@ -403,6 +474,7 @@ int wnmsLauncher(
   float *output_merged_data,
   int data_dim,
   long *keep_data,
+  long *count,
   unsigned long long *mask,
   unsigned long long *merge_mask,
   int boxes_num,
@@ -430,7 +502,14 @@ int wnmsLauncher(
   dim3 merge_blocks(DIVUP(num_all_thread, 64));
   dim3 merge_threads(64);
 
-  wnms_merge_kernel<<<merge_blocks, merge_threads>>>(boxes_num, num_to_keep, boxes, data2merge, data_dim, keep_data, merge_mask, output_merged_data);
+  long *keep_data_gpu = NULL;
+  CHECK_CALL(cudaMalloc((void **)&keep_data_gpu,
+                         boxes_num * sizeof(long)));
+  CHECK_CALL(cudaMemcpy(keep_data_gpu, keep_data,
+                         boxes_num * sizeof(long),
+                         cudaMemcpyHostToDevice));
+
+  wnms_merge_kernel<<<merge_blocks, merge_threads>>>(boxes_num, num_to_keep, boxes, data2merge, data_dim, keep_data_gpu, count, merge_mask, output_merged_data);
 
   return num_to_keep;
   // const int boxes_num,

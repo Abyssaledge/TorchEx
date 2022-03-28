@@ -43,6 +43,7 @@ int wnmsLauncher(
   float *output_merged_data,
   int data_dim,
   long *keep_data,
+  long *count,
   unsigned long long *mask,
   unsigned long long *merge_mask,
   int boxes_num,
@@ -55,6 +56,7 @@ int wnms_gpu(
   at::Tensor data2merge,
   at::Tensor output,
   at::Tensor keep,
+  at::Tensor count,
 	float nms_overlap_thresh,
 	float merge_thresh,
   int device_id) {
@@ -64,10 +66,13 @@ int wnms_gpu(
   CHECK_INPUT(boxes);
   CHECK_INPUT(data2merge);
   CHECK_INPUT(output);
+  CHECK_INPUT(count);
   CHECK_CONTIGUOUS(keep);
   cudaSetDevice(device_id);
   assert(boxes.size(0) == data2merge.size(0));
   assert(boxes.size(0) == output.size(0));
+  assert(data2merge.size(1) == output.size(1));
+  long *count_ptr = count.data_ptr<long>();
 
   int boxes_num = boxes.size(0);
   const float *boxes_data = boxes.data_ptr<float>();
@@ -87,7 +92,7 @@ int wnms_gpu(
   float *output_ptr = output.data_ptr<float>();
   int output_dim = output.size(1);
 
-  int num_to_keep = wnmsLauncher(boxes_data, data2merge_ptr, output_ptr, output_dim, keep_data, mask_ptr, merge_mask_ptr, boxes_num, nms_overlap_thresh, merge_thresh);
+  int num_to_keep = wnmsLauncher(boxes_data, data2merge_ptr, output_ptr, output_dim, keep_data, count_ptr, mask_ptr, merge_mask_ptr, boxes_num, nms_overlap_thresh, merge_thresh);
 
   cudaFree(mask_ptr);
   cudaFree(merge_mask_ptr);
@@ -98,5 +103,5 @@ int wnms_gpu(
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("weighted_nms", &wnms_gpu, "oriented nms gpu");
+  m.def("wnms_gpu", &wnms_gpu, "oriented nms gpu");
 }

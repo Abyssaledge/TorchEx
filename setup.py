@@ -8,7 +8,7 @@ setup(
     author='Lve Fan',
     ext_modules=[
         CUDAExtension(
-            'weighted_nms', 
+            'weighted_nms_ext', 
             ['./torchex/src/weighted_nms/wnms.cpp',
              './torchex/src/weighted_nms/wnms_kernel.cu',]
         ),
