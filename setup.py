@@ -13,6 +13,11 @@ setup(
              './torchex/src/weighted_nms/wnms_kernel.cu',]
         ),
         CUDAExtension(
+            'dynamic_point_pool', 
+            ['./torchex/src/dynamic_point_pool/dynamic_point_pool.cpp',
+             './torchex/src/dynamic_point_pool/dynamic_point_pool_kernel.cu',]
+        ),
+        CUDAExtension(
             'sparse_roi_voxelization', 
             ['./torchex/src/sparse_roi_voxelization/sparse_roiaware_pool3d.cpp',
              './torchex/src/sparse_roi_voxelization/sparse_roiaware_pool3d_kernel.cu',]
