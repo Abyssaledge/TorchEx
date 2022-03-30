@@ -1,7 +1,5 @@
 // Modified from
 // https://github.com/sshaoshuai/PCDet/blob/master/pcdet/ops/roiaware_pool3d/src/roiaware_pool3d_kernel.cu
-// Written by Shaoshuai Shi
-// All Rights Reserved 2019.
 
 #include <assert.h>
 #include <vector>
@@ -68,7 +66,7 @@ __device__ inline int check_pt_in_box3d(const float *pt, const float *box3d,
 }
 
 __global__ void generate_pts_mask_for_box3d(
-  const int boxes_num, const int pts_num, const int max_pts_num,
+  const int boxes_num, const int pts_num, const int max_pts_num, const int max_all_pts_num,
   const float *rois,
   const float *pts,
   int *pts_mask,
@@ -107,6 +105,7 @@ __global__ void generate_pts_mask_for_box3d(
     if (cnt >= max_pts_num) return;
 
     int new_pt_idx = atomicAdd(&global_counter[0], 1);
+    if (new_pt_idx >= max_all_pts_num) return;
 
     float off_x = local_x + l / 2;
     float off_y = local_y + w / 2;
@@ -121,18 +120,22 @@ __global__ void generate_pts_mask_for_box3d(
     pts_mask[box_idx * max_pts_num * 2 + cnt * 2 + 0] = pt_idx;
     pts_mask[box_idx * max_pts_num * 2 + cnt * 2 + 1] = new_pt_idx;
 
-    assert (info_dim == 10);
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 0] = local_x;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 1] = local_y;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 2] = local_z;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 3] = off_x;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 4] = off_y;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 5] = off_z;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 6] = off_x_2;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 7] = off_y_2;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 8] = off_z_2;
-    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 9] = is_in_margin;
+    assert (info_dim == 13);
+    assert (boxes_num * max_pts_num * info_dim > box_idx * max_pts_num * info_dim + cnt * info_dim + 12);
 
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 0] = pts[0];
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 1] = pts[1];
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 2] = pts[2];
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 3] = local_x;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 4] = local_y;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 5] = local_z;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 6] = off_x;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 7] = off_y;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 8] = off_z;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 9] = off_x_2;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 10] = off_y_2;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 11] = off_z_2;
+    pts_mask_info[box_idx * max_pts_num * info_dim + cnt * info_dim + 12] = is_in_margin;
 
 
     #ifdef ASSERTION
@@ -170,8 +173,8 @@ __global__ void collect_inside_points(
   const int info_dim,
   const int *pts_mask,
   const float *pts_mask_info,
-  int *out_pts_idx,
-  int *out_roi_idx,
+  long *out_pts_idx,
+  long *out_roi_idx,
   float *out_pts_feats
 ) {
 
@@ -202,16 +205,23 @@ __global__ void collect_inside_points(
 
 
 
- std::vector<at::Tensor> dynamic_point_pool_launcher(
+ void dynamic_point_pool_launcher(
   int boxes_num,
   int pts_num, 
   int max_num_pts_per_box,
+  int max_all_pts_num,
   const float *rois,
   const float *pts,
-  const float *extra_wlh
+  const float *extra_wlh,
+  long *out_pts_idx,
+  long *out_roi_idx,
+  float *out_pts_feats,
+  int info_dim
   ) {
-
-  int info_dim = 10;
+  
+  #ifdef DEBUG
+  printf("pts_num: %d, boxes_num: %d, max_num: %d \n", pts_num, boxes_num, max_num_pts_per_box);
+  #endif
 
   int *inbox_counter = NULL;
   CHECK_CALL(cudaMalloc(&inbox_counter,   boxes_num * sizeof(int)));
@@ -230,6 +240,7 @@ __global__ void collect_inside_points(
   CHECK_CALL(cudaMemset(pts_mask_info, 0,  boxes_num * max_num_pts_per_box * info_dim * sizeof(float)));
 
 
+
   float extra_w = extra_wlh[0];
   float extra_l = extra_wlh[1];
   float extra_h = extra_wlh[2];
@@ -237,7 +248,7 @@ __global__ void collect_inside_points(
   dim3 threads(THREADS_PER_BLOCK);
 
   generate_pts_mask_for_box3d<<<blocks_mask, threads>>>(
-    boxes_num, pts_num, max_num_pts_per_box,
+    boxes_num, pts_num, max_num_pts_per_box, max_all_pts_num,
     rois,
     pts,
     pts_mask,
@@ -249,43 +260,41 @@ __global__ void collect_inside_points(
     extra_l,
     extra_h
   );
+  #ifdef DEBUG
+  printf("Finish mask generation.\n");
+  CHECK_CALL(cudaGetLastError());
+  CHECK_CALL(cudaDeviceSynchronize());
+  #endif
 
-  int new_pts_num = *global_counter;
-
-
-  at::Tensor out_pts_idx = -1 * at::ones({new_pts_num}, torch::kInt32);
-  at::Tensor out_roi_idx = -1 * at::ones({new_pts_num}, torch::kInt32);
-  at::Tensor out_pts_feats = at::zeros({new_pts_num, info_dim}, torch::kFloat32);
-
-  int *out_pts_idx_data = out_pts_idx.data_ptr<int>();
-  int *out_roi_idx_data = out_roi_idx.data_ptr<int>();
-  float *out_pts_feats_data = out_pts_feats.data_ptr<float>();
+  int new_pts_num[1];
+  CHECK_CALL(cudaMemcpy(new_pts_num, global_counter, sizeof(int), cudaMemcpyDeviceToHost));
 
   dim3 block_collect(DIVUP(max_num_pts_per_box, THREADS_PER_BLOCK), boxes_num);
   dim3 thread_collect(THREADS_PER_BLOCK);
 
+
   collect_inside_points<<<block_collect, thread_collect>>>(
     boxes_num,
     pts_num,
-    new_pts_num,
+    new_pts_num[0],
     max_num_pts_per_box,
     info_dim,
     pts_mask,
     pts_mask_info,
-    out_pts_idx_data, out_roi_idx_data, out_pts_feats_data
+    out_pts_idx, out_roi_idx, out_pts_feats
   );
 
-
-  #ifdef DEBUG
-  CHECK_CALL(cudaGetLastError());
-  CHECK_CALL(cudaDeviceSynchronize());
-  #endif
 
   cudaFree(inbox_counter);
   cudaFree(global_counter);
   cudaFree(pts_mask);
   cudaFree(pts_mask_info);
 
-  return  {out_pts_idx, out_roi_idx, out_pts_feats};
+  #ifdef DEBUG
+  CHECK_CALL(cudaGetLastError());
+  CHECK_CALL(cudaDeviceSynchronize());
+  #endif
+
+  return;
 
 }

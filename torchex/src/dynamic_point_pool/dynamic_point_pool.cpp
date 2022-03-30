@@ -1,7 +1,5 @@
 // Modified from
 // https://github.com/sshaoshuai/PCDet/blob/master/pcdet/ops/roiaware_pool3d/src/roiaware_pool3d_kernel.cu
-// Written by Shaoshuai Shi
-// All Rights Reserved 2019.
 
 #include <assert.h>
 #include <torch/extension.h>
@@ -16,54 +14,80 @@
   CHECK_CUDA(x);       \
   CHECK_CONTIGUOUS(x)
 
-std::vector<at::Tensor> dynamic_point_pool_launcher(
+void dynamic_point_pool_launcher(
   int boxes_num,
   int pts_num, 
   int max_num_pts_per_box,
+  int max_all_pts_num,
   const float *rois,
   const float *pts,
-  const float *extra_wlh
+  const float *extra_wlh,
+  long *out_pts_idx,
+  long *out_roi_idx,
+  float *out_pts_feats,
+  int info_dim
   );
 
 
-std::vector<at::Tensor> dynamic_point_pool_gpu(
+void dynamic_point_pool_gpu(
   at::Tensor rois,
   at::Tensor pts,
   std::vector<float> extra_wlh,
-  int max_num_pts_per_box
+  int max_num_pts_per_box,
+  at::Tensor out_pts_idx,
+  at::Tensor out_roi_idx,
+  at::Tensor out_pts_feats
 );
 
 
-std::vector<at::Tensor> dynamic_point_pool_gpu(
+void dynamic_point_pool_gpu(
   at::Tensor rois,
   at::Tensor pts,
   std::vector<float> extra_wlh,
-  int max_num_pts_per_box
+  int max_num_pts_per_box,
+  at::Tensor out_pts_idx,
+  at::Tensor out_roi_idx,
+  at::Tensor out_pts_feats
 ) {
   // params rois: (N, 7) [x, y, z, w, l, h, ry] in LiDAR coordinate
   // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
 
   CHECK_INPUT(rois);
   CHECK_INPUT(pts);
+  CHECK_INPUT(out_pts_idx);
+  CHECK_INPUT(out_roi_idx);
+  CHECK_INPUT(out_pts_feats);
 
   int boxes_num = rois.size(0);
   int pts_num = pts.size(0);
+  int max_all_pts_num = out_pts_idx.size(0);
+  // printf("boxes_num: %d, pts_num: %d, max_all_pts_num: %d \n", boxes_num, pts_num, max_all_pts_num);
+  int info_dim = out_pts_feats.size(1);
+  assert (info_dim == 13);
 
   const float *rois_data = rois.data_ptr<float>();
   const float *pts_data = pts.data_ptr<float>();
 
+  long *out_pts_idx_data = out_pts_idx.data_ptr<long>();
+  long *out_roi_idx_data = out_roi_idx.data_ptr<long>();
+  float *out_pts_feats_data = out_pts_feats.data_ptr<float>();
+
   const float extra_wlh_array[3] = {extra_wlh[0], extra_wlh[1], extra_wlh[2]};
 
-  auto out_vector = dynamic_point_pool_launcher(
+  dynamic_point_pool_launcher(
     boxes_num,
     pts_num, 
     max_num_pts_per_box,
+    max_all_pts_num,
     rois_data,
     pts_data,
-    extra_wlh_array
+    extra_wlh_array,
+    out_pts_idx_data,
+    out_roi_idx_data,
+    out_pts_feats_data,
+    info_dim
   );
 
-  return out_vector;
 }
 
 

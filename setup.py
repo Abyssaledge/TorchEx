@@ -13,7 +13,7 @@ setup(
              './torchex/src/weighted_nms/wnms_kernel.cu',]
         ),
         CUDAExtension(
-            'dynamic_point_pool', 
+            'dynamic_point_pool_ext', 
             ['./torchex/src/dynamic_point_pool/dynamic_point_pool.cpp',
              './torchex/src/dynamic_point_pool/dynamic_point_pool_kernel.cu',]
         ),
