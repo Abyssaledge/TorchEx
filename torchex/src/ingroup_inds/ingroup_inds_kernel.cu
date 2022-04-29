@@ -9,7 +9,6 @@
 #include "../utils/error.cuh"
 
 #define THREADS_PER_BLOCK 256
-#define LARGE_NEG -10000
 #define DIVUP(m, n) ((m) / (n) + ((m) % (n) > 0))
 
 // #define DEBUG

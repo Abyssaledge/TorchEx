@@ -29,8 +29,6 @@ void ingroup_inds_gpu(
   at::Tensor group_inds,
   at::Tensor out_inds
 ) {
-  // params rois: (N, 7) [x, y, z, w, l, h, ry] in LiDAR coordinate
-  // params pts: (npoints, 3) [x, y, z] in LiDAR coordinate
 
   CHECK_INPUT(group_inds);
   CHECK_INPUT(out_inds);
