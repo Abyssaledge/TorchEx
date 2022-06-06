@@ -23,21 +23,6 @@ setup(
              './torchex/src/sparse_roi_voxelization/sparse_roiaware_pool3d_kernel.cu',]
         ),
         CUDAExtension(
-            'enlarged_roi_voxelization', 
-            ['./torchex/src/enlarged_roi_voxelization/enlarged_roiaware_pool3d.cpp',
-             './torchex/src/enlarged_roi_voxelization/enlarged_roiaware_pool3d_kernel.cu',]
-        ),
-        CUDAExtension(
-            'roi_point_voxelization', 
-            ['./torchex/src/roi_point_voxelization/roi_point_voxelization.cpp',
-             './torchex/src/roi_point_voxelization/roi_point_voxelization_kernel.cu',]
-        ),
-        CUDAExtension(
-            'roi_point_voxelization_v2', 
-            ['./torchex/src/roi_point_voxelization_v2/roi_point_voxelization_v2.cpp',
-             './torchex/src/roi_point_voxelization_v2/roi_point_voxelization_kernel_v2.cu',]
-        ),
-        CUDAExtension(
             'ingroup_indices', 
             ['./torchex/src/ingroup_inds/ingroup_inds.cpp',
              './torchex/src/ingroup_inds/ingroup_inds_kernel.cu',]
