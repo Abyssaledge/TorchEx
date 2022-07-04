@@ -319,7 +319,8 @@ __device__ inline float get_min_angle_diff(float angle_diff)
         else return angle_diff;
 }
 __device__ inline float get_old_angle_diff(float angle_diff){
-  return fmodf(fabsf(angle_diff), float(2 * 3.1415926));
+  float diff = fmodf(fabsf(angle_diff), float(2 * 3.1415926));
+  return fminf(float(2 * 3.1415926) - diff, diff);
 }
 
 // __device__ inline float get_min_angle_diff(float angle_diff)
@@ -368,48 +369,13 @@ __global__ void wnms_merge_kernel(
   int col_start = cur_box_idx / THREADS_PER_BLOCK_NMS;
   const unsigned long long* cur_mask = mask + cur_box_idx * col_blocks;
 
-  // find the approximate media yaw
-  float median_yaw = boxes[cur_box_idx * 5 + 4];
-  // float median_yaw = data2merge[cur_box_idx * data_dim + 8];
-  float yaw_list[200];
-  for (int i = 0; i<200; i++){ yaw_list[i] = -1000;}
-
-  int median_counter = 0;
-  for(int col=col_start; (col < col_blocks) && (median_counter < 200); col++){
-    const unsigned long long cur_block_mask = cur_mask[col];
-    if (cur_block_mask > 0) {
-      for(int j=0; j<THREADS_PER_BLOCK_NMS; j++){
-        if ( cur_block_mask & (1ULL << j) ){
-          int target_data_idx = col * THREADS_PER_BLOCK_NMS + j;
-          float target_yaw = boxes[target_data_idx * 5 + 4];
-          // float target_yaw = data2merge[target_data_idx * data_dim + 8];
-          if(median_counter<200){
-            yaw_list[median_counter] = target_yaw;
-            median_counter++;
-          }
-          else{
-            break;
-          }
-        }
-      }
-    }
-  }
-  assert(median_counter <= 200);
-  if (median_counter > 2){
-    sort(yaw_list, median_counter);
-    assert(yaw_list[0] >= yaw_list[1]);
-    assert(yaw_list[1] >= yaw_list[2]);
-    median_yaw = yaw_list[median_counter / 2];
-  }
-  assert(median_yaw != -1000);
-  
   // merging
 
   float* cur_merged_data = output_data + index * data_dim;
 
   float cur_score = data2merge[cur_box_idx * data_dim + data_dim - 1];
   float score_sum = cur_score;
-  // float cur_yaw = boxes[cur_box_idx * 5 + 4];
+  float cur_yaw = boxes[cur_box_idx * 5 + 4];
 
 
   count[index] = 1;
@@ -422,9 +388,9 @@ __global__ void wnms_merge_kernel(
       for(int j=0; j<THREADS_PER_BLOCK_NMS; j++){
         if ( cur_block_mask & (1ULL << j) ){
           int target_data_idx = col * THREADS_PER_BLOCK_NMS + j;
-          float angle_diff = boxes[target_data_idx * 5 + 4] - median_yaw;
+          float angle_diff = boxes[target_data_idx * 5 + 4] - cur_yaw;
           angle_diff = get_old_angle_diff(angle_diff);
-          if (fabsf(angle_diff) < 0.3) {
+          if (angle_diff < 0.3) {
               float score = data2merge[target_data_idx * data_dim + data_dim - 1];
               for(int d = 0; d < data_dim-1; d++){
                 cur_merged_data[d] += (data2merge[target_data_idx * data_dim + d] * score);
