@@ -14,6 +14,7 @@
 #define THREADS_PER_BLOCK 256
 #define LARGE_NEG -10000
 #define DIVUP(m, n) ((m) / (n) + ((m) % (n) > 0))
+// #define MAX(x,y) ((x)<(y)?(y):(x))
 
 // #define DEBUG
 // #define ASSERTION
@@ -47,6 +48,10 @@ __device__ inline int check_pt_in_box3d(const float *pt, const float *box3d,
   cz += h / 2.0;  // shift to the center since cz in box3d is the bottom center
 
   if (fabsf(z - cz) > large_h / 2.0) return 0;
+  // float dist_thresh = large_w * large_w / 4 + large_l * large_l / 4;
+  // if ((x - cx) * (x - cx) > dist_thresh) return 0;
+  // if ((y - cy) * (y - cy) > dist_thresh) return 0;
+
 
   lidar_to_local_coords(x - cx, y - cy, rz, local_x, local_y);
 
