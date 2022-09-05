@@ -1,11 +1,11 @@
 // Thanks for https://dl.acm.org/doi/10.1145/3208040.3208041
 // Modified from https://userweb.cs.txstate.edu/~burtscher/research/ECL-CC/
+#include "../utils/error.cuh"
 #include <cmath>
 #include <cstdio>
 #include <queue>
 #include <time.h>
 #include <unordered_map>
-#include "../utils/error.cuh"
 
 static const int blockSize = 256;
 
@@ -16,14 +16,10 @@ __global__ void calc_adj(const float *points, const float thresh_dist, int *cons
     int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n < N) {
         adj_len[n] = 0;
-        float current_x = points[n*3];
-        float current_y = points[n*3+1];
-        float current_z = points[n*3+2];
-        // float *currentPoint = points + 3 * n;
+        const float *currentPoint = points + 3 * n;
         for (int i = n + 1; i < N; i++) {
-            float delta_x = current_x - points[i*3];
-            float delta_y = current_y - points[i*3+1];
-            float delta_z = current_y - points[i*3+2];
+            const float *tempPoint = points + 3 * i;
+            float delta_x = currentPoint[0] - tempPoint[0], delta_y = currentPoint[1] - tempPoint[1], delta_z = currentPoint[2] - tempPoint[2];
             float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
             if (dist <= thresh_dist) {
                 adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
@@ -246,20 +242,19 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     compute3<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
     flatten<<<gridSize, blockSize>>>(N, d_parent);
 
-
     CHECK_CALL(cudaMemcpy(adj_matrix, d_adj_matrix, adj_mem, cudaMemcpyDeviceToHost));
     CHECK_CALL(cudaMemcpy(adj_len, d_adj_len, len_mem, cudaMemcpyDeviceToHost));
     CHECK_CALL(cudaMemcpy(parent, d_parent, len_mem, cudaMemcpyDeviceToHost));
 
     std::unordered_map<int, int> myMap;
     for (int i = 0; i < N; i++) {
-        if(!myMap.count(parent[i])){
+        if (!myMap.count(parent[i])) {
             myMap[parent[i]] = myMap.size();
         }
         components[i] = myMap[parent[i]];
         // printf("第%2d个点所在连通域为%2d\n", i, components[i]);
     }
-    printf("CUDA计算连通域数量为%3d\n", myMap.size());
+    printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
     if (check) {
         clock_t start, end;
         start = clock();
@@ -279,7 +274,8 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     CHECK_CALL(cudaFree(d_wl));
     delete adj_matrix;
     delete adj_len;
-    delete parent;
+
+    delete parent;  // 如果出现“段错误”这里注释掉就不会出现，但是原因还未弄清
 }
 
 // int main() {
