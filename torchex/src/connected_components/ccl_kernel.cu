@@ -201,6 +201,7 @@ int verify(const int *const __restrict__ adj_matrix, const int *const __restrict
             len++;
         }
     }
+    delete[] visited;
     return len;
 }
 
@@ -208,7 +209,7 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     // d_points为gpu端指针，components为cpu端指针
     // !!!传入的d_points是gpu端的!!!
 
-    int *parent = new int[N];
+    int *parent;
     CHECK_CALL(cudaHostAlloc(&parent, N * sizeof(int), cudaHostAllocDefault));
 
     // 构建邻接表
@@ -272,23 +273,49 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     CHECK_CALL(cudaFree(d_adj_len));
     CHECK_CALL(cudaFree(d_parent));
     CHECK_CALL(cudaFree(d_wl));
-    delete adj_matrix;
-    delete adj_len;
-
-    delete parent;  // 如果出现“段错误”这里注释掉就不会出现，但是原因还未弄清
+    delete []adj_matrix;
+    delete []adj_len;
+    cudaFreeHost(parent);
 }
 
 // int main() {
-//     int N = 5;
-//     float *points = new float[N * 3]{0.1, 0.1, 0.1,
-//                                    0, 0, 0,
-//                                    0.2, 0, 0.2,
-//                                    0.2, 0.2, 0.2,
-//                                    0, 0.8, 0};
+//     // 输入样例
+//     std::vector<float> points;
+//     std::ifstream infile("/home/yangyuxue/CudaPractice/connect/test_data.txt");
+//     std::string line, word;
+//     if (!infile) {
+//         printf("Cannot open test_data.txt");
+//         exit(1);
+//     }
+//     int N = 0;
+//     while (std::getline(infile, line)) {
+//         std::istringstream words(line);
+//         if (line.length() == 0) {
+//             continue;
+//         }
+//         N++;
+//         for (int i = 0; i < 3; i++) {
+//             if (words >> word) {
+//                 points.push_back(std::stod(word));
+//             } else {
+//                 printf("Error for reading test_data.txt\n");
+//                 exit(1);
+//             }
+//         }
+//     }
+//     infile.close();
+//     float *d_points;
+//     int points_mem = N * 3 * sizeof(float);
+//     cudaMalloc(&d_points, points_mem);
+//     cudaMemcpy(d_points, points.data(), points_mem, cudaMemcpyHostToDevice);
 
 //     // 计算连通分量
 //     int *components = new int[N];
-//     get_CCL(N, points, components, true);
-//     delete points;
+//     float thresh_dist = 0.5;
+//     int MAXNeighbor = 100;
+//     get_CCL(N, d_points, thresh_dist, components, MAXNeighbor, true);
+//     printf("over");
+//     delete[] components;
+//     cudaFree(d_points);
 //     return 0;
 // }
