@@ -17,7 +17,7 @@ class ConnectedComponentsFunction(Function):
         """
         if pts.device.type == 'cpu':
             pts = pts.cuda()
-        components = torch.zeros(pts.shape[0], dtype=int)
+        components = torch.zeros(pts.shape[0], dtype=torch.int32)
         connected_components_labeling.forward(pts, thresh_dist, components, max_neighbor, check)
         
 
