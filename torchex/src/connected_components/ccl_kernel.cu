@@ -8,22 +8,34 @@
 #include <unordered_map>
 
 static const int blockSize = 256;
+static const int adj_blockSize = 128;
 
 // 构建双向工作流，L用于存{16<度≤352的点}，R用于存{度>352的点}，待优化
 static __device__ int topL, posL, topR, posR;
 
 __global__ void calc_adj(const float *points, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
-    int n = blockIdx.x * blockDim.x + threadIdx.x;
-    if (n < N) {
-        adj_len[n] = 0;
-        const float *currentPoint = points + 3 * n;
-        for (int i = n + 1; i < N; i++) {
-            const float *tempPoint = points + 3 * i;
-            float delta_x = currentPoint[0] - tempPoint[0], delta_y = currentPoint[1] - tempPoint[1], delta_z = currentPoint[2] - tempPoint[2];
-            float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
-            if (dist <= thresh_dist) {
-                adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
-                adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
+    // y方向表示主导节点，x方向表示被比较的节点，对于每一个x遍历y
+    int tidx = threadIdx.x;
+    int active_idx = tidx + blockIdx.y * blockDim.x;
+    if ((blockIdx.y * blockDim.x <= blockIdx.x * blockDim.x) && (active_idx < N)) {
+        extern __shared__ float s_points[];
+        int passive_idx = tidx + blockIdx.x * blockDim.x;
+        if (passive_idx < N) {
+            s_points[tidx * 3] = points[passive_idx * 3];
+            s_points[tidx * 3 + 1] = points[passive_idx * 3 + 1];
+            s_points[tidx * 3 + 2] = points[passive_idx * 3 + 2];
+        }
+        __syncthreads();
+        const float *currentPoint = points + 3 * active_idx;
+        for (int i = 0; i < blockDim.x; i++) {
+            passive_idx = i + blockIdx.x * blockDim.x;
+            if (passive_idx > active_idx && passive_idx < N) {
+                float delta_x = currentPoint[0] - s_points[i * 3], delta_y = currentPoint[1] - s_points[i * 3 + 1], delta_z = currentPoint[2] - s_points[i * 3 + 2];
+                float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+                if (dist <= thresh_dist) {
+                    adj_matrix[active_idx * MAXNeighbor + atomicAdd(&adj_len[active_idx], 1)] = passive_idx;
+                    adj_matrix[passive_idx * MAXNeighbor + atomicAdd(&adj_len[passive_idx], 1)] = active_idx;
+                }
             }
         }
     }
@@ -236,7 +248,9 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     // 计算邻接表
     int gridSize = (N + blockSize - 1) / blockSize;
 
-    calc_adj<<<gridSize, blockSize>>>(d_points, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+    dim3 adj_gridSize((N + adj_blockSize - 1) / adj_blockSize, (N + adj_blockSize - 1) / adj_blockSize);
+
+    calc_adj<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
     init<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, MAXNeighbor);
     compute1<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
     compute2<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
@@ -273,8 +287,8 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     CHECK_CALL(cudaFree(d_adj_len));
     CHECK_CALL(cudaFree(d_parent));
     CHECK_CALL(cudaFree(d_wl));
-    delete []adj_matrix;
-    delete []adj_len;
+    delete[] adj_matrix;
+    delete[] adj_len;
     cudaFreeHost(parent);
 }
 
