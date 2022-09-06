@@ -1,5 +1,11 @@
 import torch
-import ingroup_indices
+
+try:
+    import ingroup_indices
+except ImportError:
+    ingroup_indices = None
+    print('Can not import ingroup indices')
+
 from torch.autograd import Function
 class IngroupIndicesFunction(Function):
 

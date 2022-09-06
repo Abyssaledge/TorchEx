@@ -1,8 +1,13 @@
+from ast import Import
 import torch
 from torch import nn as nn
 from torch.autograd import Function
 
-import dynamic_point_pool_ext
+try:
+    import dynamic_point_pool_ext
+except ImportError:
+    dynamic_point_pool_ext = None
+    print('Can not import dynamic pool ext')
 from ipdb import set_trace
 
 
