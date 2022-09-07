@@ -6,6 +6,7 @@
 #include <queue>
 #include <time.h>
 #include <unordered_map>
+#include <assert.h>
 
 static const int blockSize = 256;
 
@@ -19,7 +20,10 @@ struct GPUTimer {
         cudaEventDestroy(beg);
         cudaEventDestroy(end);
     }
-    void start() { cudaEventRecord(beg, 0); }
+    void start() {
+        cudaEventSynchronize(beg);
+        cudaEventRecord(beg, 0);
+    }
     double stop() {
         cudaEventRecord(end, 0);
         cudaEventSynchronize(end);
@@ -44,6 +48,10 @@ __global__ void calc_adj(const float *points, const float thresh_dist, int *cons
             if (dist <= thresh_dist) {
                 adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
                 adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
+                if ((adj_len[n] >= MAXNeighbor) || (adj_len[i] >= MAXNeighbor)) {
+                    printf("Error! There is a point surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", MAXNeighbor);
+                    assert(false);
+                }
             }
         }
     }
@@ -86,11 +94,9 @@ __device__ void Union(int root_vertex, int root_adj, int *const __restrict__ par
 }
 
 // 初始化parent数组，每个点指向邻域内第一个比它小的点，没有就指向自己
-__global__ void init(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, const int N, int *const __restrict__ parent, const int MAXNeighbor) {
-    int uniq_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int increament = blockDim.x * gridDim.x;
-
-    for (int vertex = uniq_idx; vertex < N; vertex += increament) {
+__global__ void init(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, int *const __restrict__ parent, const const int N, const int MAXNeighbor) {
+    int vertex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (vertex < N) {
         int adj_idx = 0;
         int degree = adj_len[vertex];
         for (; (adj_idx < degree) && (adj_matrix[vertex * MAXNeighbor + adj_idx] >= vertex); adj_idx++) {
@@ -100,23 +106,19 @@ __global__ void init(const int *const __restrict__ adj_matrix, const int *const 
         else
             parent[vertex] = adj_matrix[vertex * MAXNeighbor + adj_idx];
     }
-
-    if (uniq_idx == 0) {
+    if (vertex == 0) {
         topL = 0;
         posL = 0;
     }
 }
 
-__global__ void compute1(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, const int N, int *const __restrict__ parent, int *const __restrict__ wl, const int MAXNeighbor) {
-    int uniq_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int increament = blockDim.x * gridDim.x;
-
-    for (int vertex = uniq_idx; vertex < N; vertex += increament) {
+__global__ void compute1(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, int *const __restrict__ parent, const int N, int *const __restrict__ wl, const int MAXNeighbor) {
+    int vertex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (vertex < N) {
         if (vertex != parent[vertex]) {
             int degree = adj_len[vertex];
             if (degree > 16) {
-                int temp_idx;
-                temp_idx = atomicAdd(&topL, 1);
+                int temp_idx = atomicAdd(&topL, 1);
                 wl[temp_idx] = vertex;
             } else {
                 int root_vertex = Find(vertex, parent);
@@ -132,7 +134,7 @@ __global__ void compute1(const int *const __restrict__ adj_matrix, const int *co
     }
 }
 
-__global__ void compute2(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, const int N, int *const __restrict__ parent, int *const __restrict__ wl, const int MAXNeighbor) {
+__global__ void compute2(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, int *const __restrict__ parent, const int N, int *const __restrict__ wl, const int MAXNeighbor) {
     int lane = threadIdx.x % warpSize;
     int vertex_idx;
     if (lane == 0) {
@@ -156,11 +158,9 @@ __global__ void compute2(const int *const __restrict__ adj_matrix, const int *co
     }
 }
 
-__global__ void flatten(const int N, int *const __restrict__ parent) {
-    int uniq_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int increament = blockDim.x * gridDim.x;
-
-    for (int vertex = uniq_idx; vertex < N; vertex += increament) {
+__global__ void flatten(int *const __restrict__ parent, const int N) {
+    int vertex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (vertex < N) {
         int current = parent[vertex], next;
         while (current > (next = parent[current])) {
             current = next;
@@ -222,37 +222,42 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     // d_points为gpu端指针，components为cpu端指针
     // !!!传入的d_points是gpu端的!!!
 
-    int *parent;
-    CHECK_CALL(cudaHostAlloc(&parent, N * sizeof(int), cudaHostAllocDefault));
+    // GPUTimer timer_cuda_malloc;
+    // timer_cuda_malloc.start();
 
-    // 构建邻接表
-    // 初始化邻接表和每个节点的度
-
+    int *parent = new int[N];
     int *d_adj_matrix;
     int *d_adj_len;
     int *d_parent;
     int *d_wl;
+
     int adj_mem = N * MAXNeighbor * sizeof(int);
     CHECK_CALL(cudaMalloc(&d_adj_matrix, adj_mem));
-    CHECK_CALL(cudaMemset(d_adj_matrix, -1, adj_mem));
     int len_mem = N * sizeof(int);
     CHECK_CALL(cudaMalloc(&d_adj_len, len_mem));
     CHECK_CALL(cudaMemset(d_adj_len, 0, len_mem));
     CHECK_CALL(cudaMalloc(&d_parent, len_mem));
     CHECK_CALL(cudaMalloc(&d_wl, len_mem));
+    // printf("time of cudaMalloc and Memset %.4f ms\n", timer_cuda_malloc.stop());
+
     // 计算邻接表
     int gridSize = (N + blockSize - 1) / blockSize;
-    GPUTimer timer;
-    timer.start();
+
+    // GPUTimer timer_adj;
+    // timer_adj.start();
     calc_adj<<<gridSize, blockSize>>>(d_points, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
-    init<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, MAXNeighbor);
-    compute1<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
-    compute2<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
-    flatten<<<gridSize, blockSize>>>(N, d_parent);
+    // printf("time of adj %.4f ms\n", timer_adj.stop());
 
-    float t = timer.stop();
-    printf("用时%.4f ms\n", t);
+    // GPUTimer timer_ccl;
+    // timer_ccl.start();
+    init<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, d_parent, N, MAXNeighbor);
+    compute1<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, d_parent, N, d_wl, MAXNeighbor);
+    compute2<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, d_parent, N, d_wl, MAXNeighbor);
+    flatten<<<gridSize, blockSize>>>(d_parent, N);
+    // printf("time of ccl %.4f ms\n", timer_ccl.stop());
 
+    // GPUTimer timer_cpu;
+    // timer_cpu.start();
     CHECK_CALL(cudaMemcpy(parent, d_parent, len_mem, cudaMemcpyDeviceToHost));
 
     std::unordered_map<int, int> myMap;
@@ -261,20 +266,24 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
             myMap[parent[i]] = myMap.size();
         }
         components[i] = myMap[parent[i]];
-        // printf("第%2d个点所在连通域为%2d\n", i, components[i]);
     }
-    printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
+    // printf("time of cpu %.4f ms\n", timer_cpu.stop());
+    // printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
+
     if (check) {
-        float * h_points = new float[3*N];
-        CHECK_CALL(cudaMemcpy(h_points, d_points, 3*N*sizeof(float), cudaMemcpyDeviceToHost));
+        float *h_points = new float[3 * N];
+        CHECK_CALL(cudaMemcpy(h_points, d_points, 3 * N * sizeof(float), cudaMemcpyDeviceToHost));
         verify(h_points, N, MAXNeighbor, thresh_dist);
         delete[] h_points;
     }
+    // GPUTimer timer_free;
+    // timer_free.start();
     CHECK_CALL(cudaFree(d_adj_matrix));
     CHECK_CALL(cudaFree(d_adj_len));
     CHECK_CALL(cudaFree(d_parent));
     CHECK_CALL(cudaFree(d_wl));
-    cudaFreeHost(parent);
+    delete[] parent;
+    // printf("time of cudaFree %.4f ms\n", timer_free.stop());
 }
 
 // int main() {
