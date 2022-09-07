@@ -20,7 +20,9 @@ struct GPUTimer {
         cudaEventDestroy(beg);
         cudaEventDestroy(end);
     }
-    void start() { cudaEventRecord(beg, 0); }
+    void start() { 
+        cudaEventSynchronize(beg);
+        cudaEventRecord(beg, 0); }
     double stop() {
         cudaEventRecord(end, 0);
         cudaEventSynchronize(end);
@@ -234,11 +236,16 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     // d_points为gpu端指针，components为cpu端指针
     // !!!传入的d_points是gpu端的!!!
 
+    GPUTimer timer_host_malloc;
+    timer_host_malloc.start();
     int *parent;
     CHECK_CALL(cudaHostAlloc(&parent, N * sizeof(int), cudaHostAllocDefault));
+    printf("time of HostMalloc %.4f ms\n", timer_host_malloc.stop());
 
     // 构建邻接表
     // 初始化邻接表和每个节点的度
+    GPUTimer timer_cuda_malloc;
+    timer_cuda_malloc.start();
 
     int *d_adj_matrix;
     int *d_adj_len;
@@ -252,23 +259,30 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
     CHECK_CALL(cudaMemset(d_adj_len, 0, len_mem));
     CHECK_CALL(cudaMalloc(&d_parent, len_mem));
     CHECK_CALL(cudaMalloc(&d_wl, len_mem));
+    printf("time of cudaMalloc and Memset %.4f ms\n", timer_cuda_malloc.stop());
     // 计算邻接表
+
     int gridSize = (N + blockSize - 1) / blockSize;
 
     dim3 adj_gridSize((N + adj_blockSize - 1) / adj_blockSize, (N + adj_blockSize - 1) / adj_blockSize);
 
-    GPUTimer timer;
-    timer.start();
 
+    GPUTimer timer_adj;
+    timer_adj.start();
     calc_adj<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+    printf("time of adj %.4f ms\n", timer_adj.stop());
+
+    GPUTimer timer_ccl;
+    timer_ccl.start();
     init<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, MAXNeighbor);
     compute1<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
     compute2<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, N, d_parent, d_wl, MAXNeighbor);
     flatten<<<gridSize, blockSize>>>(N, d_parent);
+    printf("time of ccl %.4f ms\n", timer_ccl.stop());
 
-    float t = timer.stop();
-    printf("用时%.4f ms\n", t);
 
+    GPUTimer timer_cpu;
+    timer_cpu.start();
     CHECK_CALL(cudaMemcpy(parent, d_parent, len_mem, cudaMemcpyDeviceToHost));
 
     std::unordered_map<int, int> myMap;
@@ -279,18 +293,27 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
         components[i] = myMap[parent[i]];
         // printf("第%2d个点所在连通域为%2d\n", i, components[i]);
     }
-    printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
+    float t_cpu = timer_cpu.stop();
+    printf("time of cpu %.4f ms\n", t_cpu);
+    // printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
     if (check) {
         float * h_points = new float[3*N];
         CHECK_CALL(cudaMemcpy(h_points, d_points, 3*N*sizeof(float), cudaMemcpyDeviceToHost));
         verify(h_points, N, MAXNeighbor, thresh_dist);
         delete[] h_points;
     }
+    GPUTimer timer_free;
+    timer_free.start();
     CHECK_CALL(cudaFree(d_adj_matrix));
     CHECK_CALL(cudaFree(d_adj_len));
     CHECK_CALL(cudaFree(d_parent));
     CHECK_CALL(cudaFree(d_wl));
+    printf("time of cudaFree %.4f ms\n", timer_free.stop());
+
+    GPUTimer timer_hostfree;
+    timer_hostfree.start();
     cudaFreeHost(parent);
+    printf("time of hostCudaFree %.4f ms\n\n", timer_hostfree.stop());
 }
 
 // int main() {
