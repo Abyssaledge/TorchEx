@@ -22,7 +22,7 @@ if __name__ == '__main__':
                 continue
 
             with timer.timing('Connected Components Labeling'):
-                compnents = connected_components(
+                components = connected_components(
                     pts,
                     0.5,
                     100,
