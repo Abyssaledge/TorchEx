@@ -280,7 +280,7 @@ void verify(const float *const __restrict__ points, const int *const __restrict_
 }
 
 void get_CCL(const int N, const float *const d_points, const int *const d_labels, const float thresh_dist, int *const components, const int MAXNeighbor, int mode, bool check) {
-    // d_points, d_points为gpu端指针，components为cpu端指针
+    // !!!d_points,d_labels为gpu端指针，components为cpu端指针!!!
 
     // GPUTimer timer_cuda_malloc;
     // timer_cuda_malloc.start();
