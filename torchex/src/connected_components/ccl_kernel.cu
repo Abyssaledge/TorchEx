@@ -37,7 +37,7 @@ struct GPUTimer {
 // 工作流，用于存{度>16的点}
 static __device__ int topL, posL;
 
-__global__ void calc_adj(const float *points, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
+__global__ void calc_adj_3(const float *points, const int *const __restrict__ labels, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
     // y方向表示主导节点，x方向表示被比较的节点，对于每一个x遍历y
     int tidx = threadIdx.x;
     int active_idx = tidx + blockIdx.y * blockDim.x;
@@ -54,8 +54,43 @@ __global__ void calc_adj(const float *points, const float thresh_dist, int *cons
         for (int i = 0; i < blockDim.x; i++) {
             passive_idx = i + blockIdx.x * blockDim.x;
             if (passive_idx > active_idx && passive_idx < N) {
+                if (labels && (labels[active_idx] != labels[passive_idx]))
+                    continue;
                 float delta_x = currentPoint[0] - s_points[i * 3], delta_y = currentPoint[1] - s_points[i * 3 + 1], delta_z = currentPoint[2] - s_points[i * 3 + 2];
                 float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+                if (dist <= thresh_dist) {
+                    adj_matrix[active_idx * MAXNeighbor + atomicAdd(&adj_len[active_idx], 1)] = passive_idx;
+                    adj_matrix[passive_idx * MAXNeighbor + atomicAdd(&adj_len[passive_idx], 1)] = active_idx;
+                    if ((adj_len[active_idx] >= MAXNeighbor) || (adj_len[passive_idx] >= MAXNeighbor)) {
+                        printf("Error! There is a point surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", MAXNeighbor);
+                        assert(false);
+                    }
+                }
+            }
+        }
+    }
+}
+
+__global__ void calc_adj_2(const float *points, const int *const __restrict__ labels, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
+    // y方向表示主导节点，x方向表示被比较的节点，对于每一个x遍历y
+    int tidx = threadIdx.x;
+    int active_idx = tidx + blockIdx.y * blockDim.x;
+    if ((blockIdx.y * blockDim.x <= blockIdx.x * blockDim.x) && (active_idx < N)) {
+        extern __shared__ float s_points[];
+        int passive_idx = tidx + blockIdx.x * blockDim.x;
+        if (passive_idx < N) {
+            s_points[tidx * 2] = points[passive_idx * 3];
+            s_points[tidx * 2 + 1] = points[passive_idx * 3 + 1];
+        }
+        __syncthreads();
+        const float *currentPoint = points + 3 * active_idx;
+        for (int i = 0; i < blockDim.x; i++) {
+            passive_idx = i + blockIdx.x * blockDim.x;
+            if (passive_idx > active_idx && passive_idx < N) {
+                if (labels && (labels[active_idx] != labels[passive_idx]))
+                    continue;
+                float delta_x = currentPoint[0] - s_points[i * 2], delta_y = currentPoint[1] - s_points[i * 2 + 1];
+                float dist = delta_x * delta_x + delta_y * delta_y;
                 if (dist <= thresh_dist) {
                     adj_matrix[active_idx * MAXNeighbor + atomicAdd(&adj_len[active_idx], 1)] = passive_idx;
                     adj_matrix[passive_idx * MAXNeighbor + atomicAdd(&adj_len[passive_idx], 1)] = active_idx;
@@ -182,7 +217,7 @@ __global__ void flatten(int *const __restrict__ parent, const int N) {
     }
 }
 
-void verify(const float *const __restrict__ points, const int N, const int MAXNeighbor, float thresh) {
+void verify(const float *const __restrict__ points, const int *const __restrict__ labels, const int N, const int MAXNeighbor, float thresh, int mode) {
     clock_t start, end;
     start = clock();
     int *adj_matrix = new int[N * MAXNeighbor]();
@@ -190,11 +225,20 @@ void verify(const float *const __restrict__ points, const int N, const int MAXNe
     for (int i = 0; i < N; i++) {
         const float *current_pts = points + 3 * i;
         for (int j = i + 1; j < N; j++) {
+            if (labels && (labels[i] != labels[j]))
+                continue;
             const float *temp_pts = points + 3 * j;
-            float delta_x = current_pts[0] - temp_pts[0];
-            float delta_y = current_pts[1] - temp_pts[1];
-            float delta_z = current_pts[2] - temp_pts[2];
-            float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+            float dist;
+            if (mode == 3) {
+                float delta_x = current_pts[0] - temp_pts[0];
+                float delta_y = current_pts[1] - temp_pts[1];
+                float delta_z = current_pts[2] - temp_pts[2];
+                dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
+            } else {
+                float delta_x = current_pts[0] - temp_pts[0];
+                float delta_y = current_pts[1] - temp_pts[1];
+                dist = delta_x * delta_x + delta_y * delta_y;
+            }
             if (dist < thresh) {
                 adj_matrix[i * MAXNeighbor + adj_len[i]++] = j;
                 adj_matrix[j * MAXNeighbor + adj_len[j]++] = i;
@@ -223,16 +267,15 @@ void verify(const float *const __restrict__ points, const int N, const int MAXNe
         }
     }
     end = clock(); //结束时间
-    printf("cpu计算连通域为%3d\n", len);
     printf("串行BFS用时: %f ms\n", 1000 * double(end - start) / CLOCKS_PER_SEC);
+    printf("cpu计算连通域为%3d\n", len);
     delete[] visited;
     delete[] adj_matrix;
     delete[] adj_len;
 }
 
-void get_CCL(const int N, const float *const d_points, const float thresh_dist, int *const components, const int MAXNeighbor, bool check) {
-    // d_points为gpu端指针，components为cpu端指针
-    // !!!传入的d_points是gpu端的!!!
+void get_CCL(const int N, const float *const d_points, const int *const d_labels, const float thresh_dist, int *const components, const int MAXNeighbor, int mode, bool check) {
+    // d_points, d_points为gpu端指针，components为cpu端指针
 
     // GPUTimer timer_cuda_malloc;
     // timer_cuda_malloc.start();
@@ -259,7 +302,10 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
 
     // GPUTimer timer_adj;
     // timer_adj.start();
-    calc_adj<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+    if (mode == 2)
+        calc_adj_2<<<adj_gridSize, adj_blockSize, sizeof(float) * 2 * adj_blockSize>>>(d_points, d_labels, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+    else
+        calc_adj_3<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, d_labels, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
     // printf("time of adj %.4f ms\n", timer_adj.stop());
 
     // GPUTimer timer_ccl;
@@ -286,8 +332,13 @@ void get_CCL(const int N, const float *const d_points, const float thresh_dist, 
 
     if (check) {
         float *h_points = new float[3 * N];
+        int *h_labels = nullptr;
         CHECK_CALL(cudaMemcpy(h_points, d_points, 3 * N * sizeof(float), cudaMemcpyDeviceToHost));
-        verify(h_points, N, MAXNeighbor, thresh_dist);
+        if (d_labels) {
+            h_labels = new int[N];
+            CHECK_CALL(cudaMemcpy(h_labels, d_labels, N * sizeof(int), cudaMemcpyDeviceToHost));
+        }
+        verify(h_points, h_labels, N, MAXNeighbor, thresh_dist, mode);
         delete[] h_points;
     }
     // GPUTimer timer_free;

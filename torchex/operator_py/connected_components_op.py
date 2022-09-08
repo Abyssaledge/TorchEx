@@ -7,18 +7,25 @@ import connected_components_labeling
 class ConnectedComponentsFunction(Function):
 
     @staticmethod
-    def forward(ctx, pts, thresh_dist, max_neighbor=100, check=False):
+    def forward(ctx, pts, labels, thresh_dist, max_neighbor=100, mode=3, check=False):
         """connected_components function forward.
         Args:
             pts (torch.Tensor): [npoints, 3]
+            labels (torch.Tensor): [npoints] or None
             thresh_dist (float): the farthest distance between two points
             max_neighbor(int): the maximum number of each point's neighbors
+            mode(int): the number of dimensions for distance calculation(2 or 3)
             check(bool): whether to check the results with bfs
         """
+        assert mode in [2,3], 'The mode must be 2 or 3\n'
         if pts.device.type == 'cpu':
             pts = pts.cuda()
+        if labels is None:
+            labels = torch.tensor([])
+        elif labels.device.type == 'cpu':
+            labels = labels.cuda()
         components = torch.zeros(pts.shape[0], dtype=torch.int32)
-        connected_components_labeling.forward(pts, thresh_dist, components, max_neighbor, check)
+        connected_components_labeling.forward(pts, labels, thresh_dist, components, max_neighbor, mode, check)
         
 
         ctx.mark_non_differentiable(components)

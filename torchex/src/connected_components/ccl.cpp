@@ -8,15 +8,17 @@
     CHECK_CUDA(x);     \
     CHECK_CONTIGUOUS(x)
 
-void get_CCL(const int N, const float *const points, const float thresh_dist, int *const components, const int MAXNeighbor, bool check);
+void get_CCL(const int N, const float *const points, const int *const labels, const float thresh_dist, int *const components, const int MAXNeighbor, int mode, bool check);
 
-void connected_components(at::Tensor points, float thresh, at::Tensor components, int MAXNeighbor, bool check) {
+void connected_components(at::Tensor points, at::Tensor labels, float thresh, at::Tensor components, int MAXNeighbor, int mode, bool check) {
     CHECK_INPUT(points);
     int N = points.size(0);
     const float *pts_data = points.data_ptr<float>();
-    // auto components = torch::zeros(N, torch::dtype(torch::kInt32));
+    const int *labels_data = nullptr;
+    if (labels.size(0) > 0)
+        labels_data = labels.data_ptr<int>();
     int *comp = components.data_ptr<int>();
-    get_CCL(N, pts_data, thresh, comp, MAXNeighbor, check);
+    get_CCL(N, pts_data, labels_data, thresh, comp, MAXNeighbor, mode, check);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
