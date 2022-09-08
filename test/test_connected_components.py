@@ -29,7 +29,7 @@ if __name__ == '__main__':
                     pts,
                     labels, # 不带标签则用None
                     0.5,
-                    100,
+                    75,
                     3,      # mode 2表示前两维，3表示三维
                     False,
                 )

@@ -1,7 +1,6 @@
 // Thanks for https://dl.acm.org/doi/10.1145/3208040.3208041
 // Modified from https://userweb.cs.txstate.edu/~burtscher/research/ECL-CC/
 #include "../utils/error.cuh"
-#include <assert.h>
 #include <cmath>
 #include <cstdio>
 #include <queue>
@@ -48,12 +47,14 @@ __global__ void calc_adj_3(const float *points, const int *const __restrict__ la
             float delta_x = currentPoint[0] - tempPoint[0], delta_y = currentPoint[1] - tempPoint[1], delta_z = currentPoint[2] - tempPoint[2];
             float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
             if (dist <= thresh_dist) {
-                adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
-                adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
-                if ((adj_len[n] >= MAXNeighbor) || (adj_len[i] >= MAXNeighbor)) {
-                    printf("Error! There is a point surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", MAXNeighbor);
-                    assert(false);
-                }
+                if (adj_len[n] >= MAXNeighbor)
+                    printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", n, MAXNeighbor);
+                else
+                    adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
+                if (adj_len[i] >= MAXNeighbor)
+                    printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", i, MAXNeighbor);
+                else
+                    adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
             }
         }
     }
@@ -71,12 +72,14 @@ __global__ void calc_adj_2(const float *points, const int *labels, const float t
             float delta_x = currentPoint[0] - tempPoint[0], delta_y = currentPoint[1] - tempPoint[1];
             float dist = delta_x * delta_x + delta_y * delta_y;
             if (dist <= thresh_dist) {
-                adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
-                adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
-                if ((adj_len[n] >= MAXNeighbor) || (adj_len[i] >= MAXNeighbor)) {
-                    printf("Error! There is a point surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", MAXNeighbor);
-                    assert(false);
-                }
+                if (adj_len[n] >= MAXNeighbor)
+                    printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", n, MAXNeighbor);
+                else
+                    adj_matrix[n * MAXNeighbor + atomicAdd(&adj_len[n], 1)] = i;
+                if (adj_len[i] >= MAXNeighbor)
+                    printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", i, MAXNeighbor);
+                else
+                    adj_matrix[i * MAXNeighbor + atomicAdd(&adj_len[i], 1)] = n;
             }
         }
     }
@@ -218,8 +221,10 @@ void verify(const float *const __restrict__ points, const int *const __restrict_
                 dist = delta_x * delta_x + delta_y * delta_y;
             }
             if (dist < thresh) {
-                adj_matrix[i * MAXNeighbor + adj_len[i]++] = j;
-                adj_matrix[j * MAXNeighbor + adj_len[j]++] = i;
+                if (adj_len[i] < MAXNeighbor)
+                    adj_matrix[i * MAXNeighbor + adj_len[i]++] = j;
+                if (adj_len[j] < MAXNeighbor)
+                    adj_matrix[j * MAXNeighbor + adj_len[j]++] = i;
             }
         }
     }
