@@ -16,21 +16,21 @@ if __name__ == '__main__':
     raw_pts = get_data_info(info_path)
     raw_pts = [torch.from_numpy(raw_pts[i]).float() for i in range(100)]
     raw_labels = [torch.ones(raw_pts[i].shape[0], dtype=torch.int32)*i for i in range(100)]
-    team_num = 5    # 将team_num的数据合并
+    team_num = 5   
     with torch.no_grad():
         for i in range(0,100,team_num):
-            pts = torch.concat(raw_pts[i:i+team_num], dim=0).cuda()
-            labels = torch.concat(raw_labels[i:i+team_num], dim=0).cuda()
+            pts = torch.cat(raw_pts[i:i+team_num], dim=0).cuda()
+            labels = torch.cat(raw_labels[i:i+team_num], dim=0).cuda()
             if len(pts) == 0:
                 continue
 
             with timer.timing('Connected Components Labeling'):
                 components = connected_components(
                     pts,
-                    labels, # 不带标签则用None
+                    labels,
                     0.5,
                     75,
-                    3,      # mode 2表示前两维，3表示三维
+                    2, # x-y distance or x-y-z distance
                     False,
                 )
-                print(f'cuda计算连通域数量为{components.max().item()+1}')
+                # print(f'Number of cc in cuda: {components.max().item()+1}')

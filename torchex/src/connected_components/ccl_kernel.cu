@@ -33,11 +33,9 @@ struct GPUTimer {
     }
 };
 
-// 工作流，用于存{度>16的点}
 static __device__ int topL, posL;
 
-__global__ void calc_adj_3(const float *points, const int *const __restrict__ labels, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
-    // y方向表示主导节点，x方向表示被比较的节点，对于每一个x遍历y
+__global__ void calc_adj_3(const float *points, const int *const __restrict__ labels, const float thresh_dist_squre, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
     int tidx = threadIdx.x;
     int active_idx = tidx + blockIdx.y * blockDim.x;
     if ((blockIdx.y * blockDim.x <= blockIdx.x * blockDim.x) && (active_idx < N)) {
@@ -57,7 +55,7 @@ __global__ void calc_adj_3(const float *points, const int *const __restrict__ la
                     continue;
                 float delta_x = currentPoint[0] - s_points[i * 3], delta_y = currentPoint[1] - s_points[i * 3 + 1], delta_z = currentPoint[2] - s_points[i * 3 + 2];
                 float dist = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z;
-                if (dist <= thresh_dist) {
+                if (dist <= thresh_dist_squre) {
                     if (adj_len[active_idx] >= MAXNeighbor)
                         printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", active_idx, MAXNeighbor);
                     else
@@ -72,8 +70,7 @@ __global__ void calc_adj_3(const float *points, const int *const __restrict__ la
     }
 }
 
-__global__ void calc_adj_2(const float *points, const int *const __restrict__ labels, const float thresh_dist, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
-    // y方向表示主导节点，x方向表示被比较的节点，对于每一个x遍历y
+__global__ void calc_adj_2(const float *points, const int *const __restrict__ labels, const float thresh_dist_squre, int *const __restrict__ adj_matrix, int *const __restrict__ adj_len, const int N, const int MAXNeighbor) {
     int tidx = threadIdx.x;
     int active_idx = tidx + blockIdx.y * blockDim.x;
     if ((blockIdx.y * blockDim.x <= blockIdx.x * blockDim.x) && (active_idx < N)) {
@@ -92,13 +89,13 @@ __global__ void calc_adj_2(const float *points, const int *const __restrict__ la
                     continue;
                 float delta_x = currentPoint[0] - s_points[i * 2], delta_y = currentPoint[1] - s_points[i * 2 + 1];
                 float dist = delta_x * delta_x + delta_y * delta_y;
-                if (dist <= thresh_dist) {
+                if (dist <= thresh_dist_squre) {
                     if (adj_len[active_idx] >= MAXNeighbor)
-                        printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", active_idx, MAXNeighbor);
+                        printf("Warning! The point %d is surrounded with more than %d points! Please consider enlarging the MAXNeighbor!\n", active_idx, MAXNeighbor);
                     else
                         adj_matrix[active_idx * MAXNeighbor + atomicAdd(&adj_len[active_idx], 1)] = passive_idx;
                     if (adj_len[passive_idx] >= MAXNeighbor)
-                        printf("Warning! The point %d is surrounded with more than %d points! Please enlarge the MAXNeighbor!\n", passive_idx, MAXNeighbor);
+                        printf("Warning! The point %d is surrounded with more than %d points! Please consider enlarging the MAXNeighbor!\n", passive_idx, MAXNeighbor);
                     else
                         adj_matrix[passive_idx * MAXNeighbor + atomicAdd(&adj_len[passive_idx], 1)] = active_idx;
                 }
@@ -143,7 +140,6 @@ __device__ void Union(int root_vertex, int root_adj, int *const __restrict__ par
     } while (repeat);
 }
 
-// 初始化parent数组，每个点指向邻域内第一个比它小的点，没有就指向自己
 __global__ void init(const int *const __restrict__ adj_matrix, const int *const __restrict__ adj_len, int *const __restrict__ parent, const const int N, const int MAXNeighbor) {
     int vertex = blockIdx.x * blockDim.x + threadIdx.x;
     if (vertex < N) {
@@ -220,6 +216,22 @@ __global__ void flatten(int *const __restrict__ parent, const int N) {
     }
 }
 
+__global__ void contiguous(const int *input_inds, int *out_inds, int *buffer, const int N) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= N) return;
+    buffer[tid] = -1; // reset buffer for counting
+    int this_inds = input_inds[tid];
+    atomicCAS(&buffer[this_inds], -1, 1);
+    if (tid == 0) out_inds[0] = 0;
+    __syncthreads();
+    if (buffer[tid] == 1){
+        int cnt = atomicAdd(&out_inds[0], 1);
+        buffer[tid] = cnt;
+    }
+    __syncthreads();
+    out_inds[tid] = buffer[this_inds];
+}
+
 void verify(const float *const __restrict__ points, const int *const __restrict__ labels, const int N, const int MAXNeighbor, float thresh, int mode) {
     clock_t start, end;
     start = clock();
@@ -271,21 +283,22 @@ void verify(const float *const __restrict__ points, const int *const __restrict_
             len++;
         }
     }
-    end = clock(); //结束时间
-    printf("串行BFS用时: %f ms\n", 1000 * double(end - start) / CLOCKS_PER_SEC);
-    printf("cpu计算连通域为%3d\n", len);
+    end = clock(); 
+    printf("time cost of cpu ccl: %f ms\n", 1000 * double(end - start) / CLOCKS_PER_SEC);
+    printf("number of cc in cpu: %3d\n", len);
     delete[] visited;
     delete[] adj_matrix;
     delete[] adj_len;
 }
 
-void get_CCL(const int N, const float *const d_points, const int *const d_labels, const float thresh_dist, int *const components, const int MAXNeighbor, int mode, bool check) {
+void get_CCL(const int N, const float *const d_points, const int *const d_labels, const float thresh_dist_squre, int *const components, const int MAXNeighbor, int mode, bool check) {
     // !!!d_points,d_labels为gpu端指针，components为cpu端指针!!!
 
     // GPUTimer timer_cuda_malloc;
     // timer_cuda_malloc.start();
 
-    int *parent = new int[N];
+    // int *parent = new int[N];
+    // int *components_cpu = new int[N];
     int *d_adj_matrix;
     int *d_adj_len;
     int *d_parent;
@@ -300,7 +313,6 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
     CHECK_CALL(cudaMalloc(&d_wl, len_mem));
     // printf("time of cudaMalloc and Memset %.4f ms\n", timer_cuda_malloc.stop());
 
-    // 计算邻接表
 
     int gridSize = (N + blockSize - 1) / blockSize;
     dim3 adj_gridSize((N + adj_blockSize - 1) / adj_blockSize, (N + adj_blockSize - 1) / adj_blockSize);
@@ -308,9 +320,9 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
     // GPUTimer timer_adj;
     // timer_adj.start();
     if (mode == 2)
-        calc_adj_2<<<adj_gridSize, adj_blockSize, sizeof(float) * 2 * adj_blockSize>>>(d_points, d_labels, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+        calc_adj_2<<<adj_gridSize, adj_blockSize, sizeof(float) * 2 * adj_blockSize>>>(d_points, d_labels, thresh_dist_squre, d_adj_matrix, d_adj_len, N, MAXNeighbor);
     else
-        calc_adj_3<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, d_labels, thresh_dist, d_adj_matrix, d_adj_len, N, MAXNeighbor);
+        calc_adj_3<<<adj_gridSize, adj_blockSize, sizeof(float) * 3 * adj_blockSize>>>(d_points, d_labels, thresh_dist_squre, d_adj_matrix, d_adj_len, N, MAXNeighbor);
     // printf("time of adj %.4f ms\n", timer_adj.stop());
 
     // GPUTimer timer_ccl;
@@ -319,21 +331,23 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
     compute1<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, d_parent, N, d_wl, MAXNeighbor);
     compute2<<<gridSize, blockSize>>>(d_adj_matrix, d_adj_len, d_parent, N, d_wl, MAXNeighbor);
     flatten<<<gridSize, blockSize>>>(d_parent, N);
+    contiguous<<<gridSize, blockSize>>>(d_parent, components, d_wl, N); //resue d_wl as buffer
     // printf("time of ccl %.4f ms\n", timer_ccl.stop());
 
     // GPUTimer timer_cpu;
     // timer_cpu.start();
-    CHECK_CALL(cudaMemcpy(parent, d_parent, len_mem, cudaMemcpyDeviceToHost));
+    // CHECK_CALL(cudaMemcpy(parent, d_parent, len_mem, cudaMemcpyDeviceToHost));
 
-    std::unordered_map<int, int> myMap;
-    for (int i = 0; i < N; i++) {
-        if (!myMap.count(parent[i])) {
-            myMap[parent[i]] = myMap.size();
-        }
-        components[i] = myMap[parent[i]];
-    }
+    // std::unordered_map<int, int> myMap;
+    // for (int i = 0; i < N; i++) {
+    //     if (!myMap.count(parent[i])) {
+    //         myMap[parent[i]] = myMap.size();
+    //     }
+    //     components_cpu[i] = myMap[parent[i]];
+    // }
+    // CHECK_CALL(cudaMemcpy(components, components_cpu, len_mem, cudaMemcpyHostToDevice));
     // printf("time of cpu %.4f ms\n", timer_cpu.stop());
-    // printf("CUDA计算连通域数量为%3d\n", (int)myMap.size());
+    // printf("Number of cc in cuda: %3d\n", (int)myMap.size());
 
     if (check) {
         float *h_points = new float[3 * N];
@@ -343,7 +357,7 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
             h_labels = new int[N];
             CHECK_CALL(cudaMemcpy(h_labels, d_labels, N * sizeof(int), cudaMemcpyDeviceToHost));
         }
-        verify(h_points, h_labels, N, MAXNeighbor, thresh_dist, mode);
+        verify(h_points, h_labels, N, MAXNeighbor, thresh_dist_squre, mode);
         delete[] h_points;
     }
     // GPUTimer timer_free;
@@ -352,12 +366,13 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
     CHECK_CALL(cudaFree(d_adj_len));
     CHECK_CALL(cudaFree(d_parent));
     CHECK_CALL(cudaFree(d_wl));
-    delete[] parent;
+    // delete[] parent;
+    // delete[] components_cpu;
     // printf("time of cudaFree %.4f ms\n", timer_free.stop());
 }
 
 // int main() {
-//     // 输入样例
+//     // input
 //     std::vector<float> points;
 //     std::ifstream infile("/home/yangyuxue/CudaPractice/connect/test_data.txt");
 //     std::string line, word;
@@ -387,11 +402,10 @@ void get_CCL(const int N, const float *const d_points, const int *const d_labels
 //     cudaMalloc(&d_points, points_mem);
 //     cudaMemcpy(d_points, points.data(), points_mem, cudaMemcpyHostToDevice);
 
-//     // 计算连通分量
 //     int *components = new int[N];
-//     float thresh_dist = 0.5;
+//     float thresh_dist_squre = 0.5;
 //     int MAXNeighbor = 100;
-//     get_CCL(N, d_points, thresh_dist, components, MAXNeighbor, true);
+//     get_CCL(N, d_points, thresh_dist_squre, components, MAXNeighbor, true);
 //     printf("over");
 //     delete[] components;
 //     cudaFree(d_points);

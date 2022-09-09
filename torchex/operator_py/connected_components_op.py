@@ -18,15 +18,11 @@ class ConnectedComponentsFunction(Function):
             check(bool): whether to check the results with bfs
         """
         assert mode in [2,3], 'The mode must be 2 or 3\n'
-        if pts.device.type == 'cpu':
-            pts = pts.cuda()
         if labels is None:
-            labels = torch.tensor([])
-        elif labels.device.type == 'cpu':
-            labels = labels.cuda()
-        components = torch.zeros(pts.shape[0], dtype=torch.int32)
-        connected_components_labeling.forward(pts, labels, thresh_dist, components, max_neighbor, mode, check)
-        
+            labels = pts.new_zeros(len(pts), dtype=torch.int32)
+        components = pts.new_zeros(pts.shape[0], dtype=torch.int32)
+        connected_components_labeling.forward(pts, labels, thresh_dist, components, max_neighbor, mode, check) # force true for debug
+        print(f'number of cc in cuda: {len(torch.unique(components))}\n')
 
         ctx.mark_non_differentiable(components)
 
