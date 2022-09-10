@@ -22,7 +22,6 @@ class ConnectedComponentsFunction(Function):
             labels = pts.new_zeros(len(pts), dtype=torch.int32)
         components = pts.new_zeros(pts.shape[0], dtype=torch.int32)
         connected_components_labeling.forward(pts, labels, thresh_dist, components, max_neighbor, mode, check) # force true for debug
-        print(f'number of cc in cuda: {len(torch.unique(components))}\n')
 
         ctx.mark_non_differentiable(components)
 
