@@ -27,6 +27,11 @@ setup(
             ['./torchex/src/ingroup_inds/ingroup_inds.cpp',
              './torchex/src/ingroup_inds/ingroup_inds_kernel.cu',]
         ),
+        CUDAExtension(
+            'connected_components_labeling',
+            ['./torchex/src/connected_components/ccl.cpp',
+             './torchex/src/connected_components/ccl_kernel.cu',]
+        )
     ],
     cmdclass={
         'build_ext': BuildExtension
