@@ -31,7 +31,12 @@ setup(
             'connected_components_labeling',
             ['./torchex/src/connected_components/ccl.cpp',
              './torchex/src/connected_components/ccl_kernel.cu',]
-        )
+        ),
+        CUDAExtension(
+            'find_incremental_points', 
+            ['./torchex/src/incremental_points/incremental_points.cpp',
+             './torchex/src/incremental_points/incremental_points_kernel.cu',]
+        ),
     ],
     cmdclass={
         'build_ext': BuildExtension
