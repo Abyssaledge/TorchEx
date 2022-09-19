@@ -30,7 +30,7 @@ if __name__ == '__main__':
                     labels,
                     0.5,
                     75,
-                    2, # x-y distance or x-y-z distance
+                    2, # 2 for x-y distance; 3 for x-y-z distance
                     False,
                 )
                 # print(f'Number of cc in cuda: {components.max().item()+1}')

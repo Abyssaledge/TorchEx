@@ -1,7 +1,6 @@
 import torch
 from torch import nn as nn
 from torch.autograd import Function
-
 import connected_components_labeling
 
 class ConnectedComponentsFunction(Function):
