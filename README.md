@@ -6,3 +6,6 @@ Collection of PyTorch customized operators for personal projects.
 * IngroupIndices used in [SST](https://github.com/tusen-ai/SST).
 * DynamicPointPooling (Group Correction) used in [FSD](https://github.com/tusen-ai/SST).
 * Connected Component Labeling used in [FSD](https://github.com/tusen-ai/SST).
+
+## Usage
+With PyTorch installation, simply run `pip install -e .`.
