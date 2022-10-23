@@ -20,7 +20,7 @@ struct GPUTimer {
         cudaEventSynchronize(end);
         float ms;
         cudaEventElapsedTime(&ms, beg, end);
-        printf("time of cudaMalloc and Memset %.4f ms\n", ms);
+        printf("time between cudaEventRecord begin and end is %.4f ms\n", ms);
         return ms;
     }
 };
