@@ -32,6 +32,11 @@ setup(
             ['./torchex/src/connected_components/ccl.cpp',
              './torchex/src/connected_components/ccl_kernel.cu',]
         ),
+        CUDAExtension(
+            'scatter_ext',
+            ['./torchex/src/scatter/scatter.cpp',
+             './torchex/src/scatter/scatter_kernel.cu']
+        )
     ],
     cmdclass={
         'build_ext': BuildExtension
