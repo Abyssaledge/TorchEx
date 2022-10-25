@@ -48,10 +48,6 @@ __global__ void getMaxCnt(const int *const preSum, int *d_max_cnt, int n) {
         atomicMax(d_max_cnt, preSum[i + 1] - preSum[i]);
 }
 
-__global__ void printDevice(int *d_max_cnt) {
-    printf("max_cnt in global:%d\n", d_max_cnt[0]);
-}
-
 __global__ void scatter_sum(const float *const d_feats, const int *const d_preSum, float *const d_out, int num_unq, int num_dim) {
     int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
     int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -83,32 +79,32 @@ __global__ void scatter_sum(const float *const d_feats, const int *const d_preSu
 }
 
 __global__ void scatter_sum_V2(const float *const d_feats, const int *const d_preSum, float *const d_out, int num_unq, int num_dim) {
-    int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
+    int unq_idx = threadIdx.y + blockIdx.z * blockDim.y;
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     static __shared__ float warpSum[MAX_THREADS / THREADS_PER_BLOCK][THREADS_PER_BLOCK / WARP_SIZE];
     float sum = 0;
+    int dim = blockIdx.y;
+    assert(dim < num_dim);
     int begin = -1, end = -1;
     if (unq_idx < num_unq) {
         begin = d_preSum[unq_idx], end = d_preSum[unq_idx + 1];
-        for (int dim = 0; dim < num_dim && i == 0; dim++) {
+        if (i == 0) {
             d_out[unq_idx * num_dim + dim] = 0;
         }
     }
     int feat_idx = begin + i;
     int laneIdx = threadIdx.x % WARP_SIZE;
     int warpIdx = threadIdx.x / WARP_SIZE;
-    for (int dim = 0; dim < num_dim; dim++) {
-        sum = (feat_idx < end) ? d_feats[feat_idx * num_dim + dim] : 0;
-        sum = warpReduceSum(sum, blockDim.x);
-        if (laneIdx == 0)
-            warpSum[threadIdx.y][warpIdx] = sum;
-        __syncthreads();
-        sum = (threadIdx.x < blockDim.x / WARP_SIZE) ? warpSum[threadIdx.y][threadIdx.x] : 0;
-        if (warpIdx == 0)
-            sum = warpReduceSum(sum, blockDim.x / WARP_SIZE);
-        if (threadIdx.x == 0 && unq_idx < num_unq) {
-            atomicAdd(&d_out[unq_idx * num_dim + dim], sum);
-        }
+    sum = (feat_idx < end) ? d_feats[feat_idx * num_dim + dim] : 0;
+    sum = warpReduceSum(sum, blockDim.x);
+    if (laneIdx == 0)
+        warpSum[threadIdx.y][warpIdx] = sum;
+    __syncthreads();
+    sum = (threadIdx.x < blockDim.x / WARP_SIZE) ? warpSum[threadIdx.y][threadIdx.x] : 0;
+    if (warpIdx == 0)
+        sum = warpReduceSum(sum, blockDim.x / WARP_SIZE);
+    if (threadIdx.x == 0 && unq_idx < num_unq) {
+        atomicAdd(&d_out[unq_idx * num_dim + dim], sum);
     }
 }
 
@@ -120,13 +116,15 @@ void scatter_sum_launcher(const float *const feats, const int *const unq_inv, fl
     CHECK_CALL(cudaMemset(d_max_cnt, 0, sizeof(int)));
     getPreSum<<<DIVUP(num_total, THREADS_PER_BLOCK), THREADS_PER_BLOCK>>>(unq_inv, d_preSum, num_total);
     getMaxCnt<<<DIVUP(num_unq, THREADS_PER_BLOCK), THREADS_PER_BLOCK>>>(d_preSum, d_max_cnt, num_unq);
-    printDevice<<<1, 1>>>(d_max_cnt);
     CHECK_CALL(cudaMemcpy(&max_cnt, d_max_cnt, sizeof(int), cudaMemcpyDeviceToHost));
-    printf("max_cnt:%d\n", max_cnt);
     dim3 blockSize(THREADS_PER_BLOCK, MAX_THREADS / THREADS_PER_BLOCK);
     dim3 gridSize(DIVUP(max_cnt, blockSize.x), DIVUP(num_unq, blockSize.y));
     scatter_sum<<<gridSize, blockSize>>>(feats, d_preSum, out, num_unq, channel);
+    // dim3 blockSize(THREADS_PER_BLOCK, MAX_THREADS / THREADS_PER_BLOCK);
+    // dim3 gridSize(DIVUP(max_cnt, blockSize.x), channel, DIVUP(num_unq, blockSize.y));
+    // scatter_sum_V2<<<gridSize, blockSize>>>(feats, d_preSum, out, num_unq, channel);
     CHECK_CALL(cudaFree(d_preSum));
+    CHECK_CALL(cudaFree(d_max_cnt));
 }
 
 // void read_file(std::string filename, std::vector<int> &array, int num_cols) {
@@ -157,11 +155,11 @@ void scatter_sum_launcher(const float *const feats, const int *const unq_inv, fl
 // int main() {
 //     // input
 //     std::vector<int> unq_preSum, unq_inv;
-//     std::string preSum_name = "/home/yuxue_yang/PythonWorks/unq_preSum_test.txt", inv_name = "/home/yuxue_yang/PythonWorks/unq_inv_test.txt";
+//     std::string preSum_name = "/home/yangyuxue/CudaPractice/connect/unq_preSum_test.txt", inv_name = "/home/yangyuxue/CudaPractice/connect/unq_inv_test.txt";
 //     int num_cols = 1;
 //     read_file(preSum_name, unq_preSum, num_cols);
 //     read_file(inv_name, unq_inv, num_cols);
-//     int channel = 32;
+//     int channel = 128;
 //     int num_unq = unq_preSum.size() - 1;
 //     int num_total = unq_inv.size();
 //     // int *calc_preSum = new int[num_unq + 1];
@@ -190,9 +188,11 @@ void scatter_sum_launcher(const float *const feats, const int *const unq_inv, fl
 //     timer.stop();
 //     CHECK_CALL(cudaMemcpy(out, d_out, num_unq * channel * sizeof(float), cudaMemcpyDeviceToHost));
 //     for (int i = 0; i < num_unq; i++) {
-//         float delta = unq_preSum[i + 1] - unq_preSum[i];
-//         if (abs(out[i * channel] - delta) > 1e-3)
-//             printf("error in unq:%5d. out[i]:%2.2f\n", i, out[i * channel]);
+//         for (int j = 0; j < channel; j++) {
+//             float delta = unq_preSum[i + 1] - unq_preSum[i];
+//             if (abs(out[i * channel] - delta) > 1e-3)
+//                 printf("error. out[%3d][%3d]:%3.1f, cnt[i]:%3.1f\n", i, j, out[i * channel + j], delta);
+//         }
 //     }
 //     return 0;
 // }
