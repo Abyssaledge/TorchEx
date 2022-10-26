@@ -29,6 +29,6 @@ class ConnectedComponentsFunction(Function):
     @staticmethod
     def backward(ctx, components):
 
-        return None, None, None, None
+        return None, None, None, None, None, None
 
 connected_components = ConnectedComponentsFunction.apply
