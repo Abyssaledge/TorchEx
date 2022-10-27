@@ -38,12 +38,15 @@ def check_method(feat, coors, mode='sum'):
     flag1 = torch.isclose(ans1, ans2).all()
 
     if mode == 'max':
-        flag2 = (arg1 == arg2).all()
+        unq_idx, dim = torch.where(arg1 != arg2)
+        idx1 = arg1[unq_idx, dim]
+        idx2 = arg2[unq_idx, dim].long()
+        flag2 = torch.isclose(feat[idx1, dim], feat[idx2, dim]).all()
     else:
         flag2 = True
     
-    # if not flag2:
-    #     print('Indices Error')
+    if not flag2:
+        print('Indices Error')
         # set_trace()
     if not flag1:
         print('Value Error')

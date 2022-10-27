@@ -46,9 +46,24 @@ def check_method(times, mode='sum'):
         if mode == 'max':
             flag2 = bool((arg1 == arg2).all().cpu())
         else:
-            flag2 = True
-        if not flag1 or not flag2:
-            print(f'check:\tans {flag1} index {flag2}')
+            ans2, arg2 = scatter_max(feat, meta)
+
+    flag1 = torch.isclose(ans1, ans2).all()
+
+    if mode == 'max':
+        unq_idx, dim = torch.where(arg1 != arg2)
+        idx1 = arg1[unq_idx, dim]
+        idx2 = arg2[unq_idx, dim].long()
+        flag2 = torch.isclose(feat[idx1, dim], feat[idx2, dim]).all()
+    else:
+        flag2 = True
+    
+    if not flag2:
+        print('Indices Error')
+        # set_trace()
+    if not flag1:
+        print('Value Error')
+        # set_trace()
 
 
 if __name__ == '__main__':

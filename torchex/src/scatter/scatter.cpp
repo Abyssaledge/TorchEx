@@ -17,6 +17,8 @@ void scatter_max_launcher(const float *const feats, const int *const preSum, flo
 
 void getPreSum_launcher(const int *const unq_inv, int *const preSum, int num_total);
 
+void getUnqCnts32_launcher(const int *const unq_cnts, int *const unq_cnts32, int num_unq);
+
 void scatter_sum_gpu(
     at::Tensor feats,
     at::Tensor preSum,
@@ -63,8 +65,20 @@ void getPreSum_gpu(
     getPreSum_launcher(unq_inv_data, preSum_data, num_total);
 }
 
+void getUnqCnts32_gpu(
+    at::Tensor unq_cnts,
+    at::Tensor unq_cnts32) {
+    CHECK_INPUT(unq_cnts);
+    CHECK_INPUT(unq_cnts32);
+    int num_unq = unq_cnts.size(0);
+    const int *unq_cnts_data = unq_cnts.data_ptr<int>();
+    int *unq_cnts32_data = unq_cnts32.data_ptr<int>();
+    getUnqCnts32_launcher(unq_cnts_data, unq_cnts32_data, num_unq);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("sum", &scatter_sum_gpu, "scatter_sum (CUDA)");
     m.def("max", &scatter_max_gpu, "scatter_max (CUDA)");
     m.def("getPreSum", &getPreSum_gpu, "get preSum from unq_inv (CUDA)");
+    m.def("getUnqCnts32", &getUnqCnts32_gpu, "get unq_cnts32 from unq_cnts (CUDA)");
 }
