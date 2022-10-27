@@ -54,15 +54,18 @@ if __name__ == '__main__':
     device = torch.device("cuda:0")
     mode = 'max'
     size = random.randint(1, 10000)
-    C = random.randint(1, 1000)
-    for i in range(100):
-        coors_x = torch.randint(0, 10, (size,))
-        coors_y = torch.randint(0, 10, (size,))
-        coors_z = torch.randint(0, 10, (size,))
-        coors = torch.stack([coors_x, coors_y, coors_z], dim=1).int().to(device)
-        coors[:2000] = 0
-        coors, order = get_sorted_group_inds(coors)
+    # C = random.randint(1, 1000)
 
-        feats = torch.rand(size, C, dtype=torch.float).to(device)
+    for C in [64, 1000]:
+        print(f'******** Test channels {C} ********')
+        for i in range(10):
+            coors_x = torch.randint(0, 10, (size,))
+            coors_y = torch.randint(0, 10, (size,))
+            coors_z = torch.randint(0, 10, (size,))
+            coors = torch.stack([coors_x, coors_y, coors_z], dim=1).int().to(device)
+            coors[:2000] = 0
+            coors, order = get_sorted_group_inds(coors)
 
-        check_method(feats, coors, mode='max')
+            feats = torch.rand(size, C, dtype=torch.float).to(device)
+
+            check_method(feats, coors, mode='max')
