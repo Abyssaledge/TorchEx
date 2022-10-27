@@ -5,17 +5,19 @@ import scatter_ext
 
 
 class ScatterMeta:
-    def __init__(self, unq_inv, unq_cnts) -> None:
+    def __init__(self, unq_coors, unq_inv, unq_cnts) -> None:
         assert unq_inv.ndim in (
             1, 2), f"unq_inv in ScatterMeta should be 1 or 2-dims, but got {unq_inv.ndim}-dims"
         assert unq_cnts.ndim in (
             1, 2), f"unq_cnts in ScatterMeta should be 1 or 2-dims, but got {unq_cnts.ndim}-dims"
-        self.unq_inv = unq_inv.int()
+        self.unq_inv = unq_inv.long()
+        self._unq_inv_int = unq_inv.int()
+        self.unq_coors = unq_coors
         if unq_cnts.ndim == 1:
             self.unq_cnts = unq_cnts.unsqueeze(-1)
         else:
             self.unq_cnts = unq_cnts
-        self.preSum = getPreSum(unq_inv)
+        self.preSum = getPreSum(self._unq_inv_int)
         assert self.unq_inv.shape[0] == self.preSum[-1]
         self.max_cnt = self.unq_cnts.max().item()
         self.num_unq = self.preSum.shape[0] - 1
@@ -126,7 +128,7 @@ class ScatterMaxFunction(Function):
         num_unq = data.num_unq
         channel = feats.shape[1]
         out = feats.new_zeros((num_unq, channel))
-        arg = data.unq_inv.new_zeros((num_unq, channel))
+        arg = data._unq_inv_int.new_zeros((num_unq, channel))
         scatter_ext.max(feats, data.preSum, out, arg, data.max_cnt)
         ctx.save_for_backward(arg)
         ctx.mark_non_differentiable(arg)
@@ -137,7 +139,7 @@ class ScatterMaxFunction(Function):
     def backward(ctx, g_out, g_arg):
         arg = ctx.saved_tensors
         g_input = g_out.new_zeros(ctx.shape)
-        arg = arg.type(torch.int64)
+        arg = arg.long()
         g_input.scatter_(0, arg, g_out)
         return g_input, None
 
