@@ -10,5 +10,5 @@ except ImportError:
 from .scatter_op import scatter_sum, scatter_mean, scatter_max, ScatterMeta, get_sorted_group_inds
 from .group_fps_op import group_fps
 __all__ = ['dynamic_point_pool', 'TorchTimer', 'ingroup_inds', 'connected_components', 'scatter_sum', 'scatter_mean',
-           'scatter_max', 'ScatterMeta', 'incremental_points_mask']
+           'scatter_max', 'ScatterMeta', 'incremental_points_mask', 'group_fps']
 

@@ -29,8 +29,8 @@ random.seed(0)
 
 
 def check_method(feat, coors, mode='sum'):
-    _, unq_inv, unq_cnts = torch.unique_consecutive(coors, return_inverse=True, return_counts=True, dim=0)
-    meta = ScatterMeta(unq_inv, unq_cnts)
+    unq_coors, unq_inv, unq_cnts = torch.unique_consecutive(coors, return_inverse=True, return_counts=True, dim=0)
+    meta = ScatterMeta(unq_coors, unq_inv, unq_cnts)
     assert mode in ['sum', 'mean', 'max']
 
     with timer_torch_scatter.timing(f'torch_scatter.scatter_{str(mode)}'):
