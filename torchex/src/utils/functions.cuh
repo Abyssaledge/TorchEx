@@ -1,5 +1,6 @@
 #ifndef TORCHEX
 #define TORCHEX
+#include <assert.h>
 __device__ __forceinline__ int up_2n_d(int n);
 
 __device__ __forceinline__ int up_2n_d(int n){

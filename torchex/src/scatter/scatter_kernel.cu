@@ -1,4 +1,5 @@
 #include "../utils/error.cuh"
+#include "../utils/functions.cuh"
 #include "../utils/timer.cuh"
 #include <assert.h>
 #include <cfloat>
@@ -10,18 +11,6 @@
 #define THREADS_PER_BLOCK 256
 #define WARP_SIZE 32
 #define DIVUP(m, n) ((m + n - 1) / n)
-
-__forceinline__ int up_2n(int n) {
-    if (n == 1)
-        return 1;
-    int temp = n - 1;
-    temp |= temp >> 1;
-    temp |= temp >> 2;
-    temp |= temp >> 4;
-    temp |= temp >> 8;
-    temp |= temp >> 16;
-    return temp + 1;
-}
 
 template <typename T>
 __device__ inline T warpReduceSum(T sum, int blockSize) {
@@ -99,6 +88,12 @@ __global__ void getPreSum(const int *const unq_inv, int *const preSum, int n) {
         preSum[groupIdx[tid] + 1] = i + 1;
 }
 
+__global__ void getUnqCnts32(const int *const unq_cnts, int *const unq_cnts_32, int n) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i < n)
+        unq_cnts_32[i] = DIVUP(unq_cnts[i], 32) * 32;
+}
+
 __global__ void scatter_sum(const float *const d_feats, const int *const d_preSum, float *const d_out, int num_unq, int num_dim) {
     int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
     int tid = threadIdx.x;
@@ -172,6 +167,10 @@ __global__ void scatter_max(const float *const d_feats, const int *const d_preSu
 
 void getPreSum_launcher(const int *const unq_inv, int *const preSum, int num_total) {
     getPreSum<<<DIVUP(num_total, THREADS_PER_BLOCK), THREADS_PER_BLOCK, THREADS_PER_BLOCK * sizeof(int)>>>(unq_inv, preSum, num_total);
+}
+
+void getUnqCnts32_launcher(const int *const unq_cnts, int *const unq_cnts32, int num_unq) {
+    getUnqCnts32<<<DIVUP(num_unq, THREADS_PER_BLOCK), THREADS_PER_BLOCK>>>(unq_cnts, unq_cnts32, num_unq);
 }
 
 void scatter_sum_launcher(const float *const feats, const int *const preSum, float *const out,

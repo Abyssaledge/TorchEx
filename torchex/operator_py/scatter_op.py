@@ -18,6 +18,7 @@ class ScatterMeta:
         else:
             self.unq_cnts = unq_cnts
         self.preSum = getPreSum(self._unq_inv_int)
+        self.preSum32 = getPreSum32(self.unq_cnts)
         assert self.unq_inv.shape[0] == self.preSum[-1]
         self.max_cnt = self.unq_cnts.max().item()
         self.num_unq = self.preSum.shape[0] - 1
@@ -63,10 +64,11 @@ class ScatterSumFunction(Function):
             feats (torch.Tensor, dtype:float32): [num_total, channel]
             data (class ScatterMeta):
                 unq_inv (torch.Tensor, dtype:int32): [num_total]
-                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique sets
+                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique group
                 preSum (torch.Tensor, dtype:int32): [num_unq+1]
-                max_cnt (int32): maximum number of feats in unique sets
-                num_unq (int32): number of unique sets
+                preSum32 (torch.Tensor, dtype:int32): [num_unq+1]
+                max_cnt (int32): maximum number of feats in unique groups
+                num_unq (int32): number of unique groups
         """
         num_unq = data.num_unq
         channel = feats.shape[1]
@@ -92,10 +94,11 @@ class ScatterMeanFunction(Function):
             feats (torch.Tensor, dtype:float32): [num_total, channel]
             src (class ScatterMeta):
                 unq_inv (torch.Tensor, dtype:int32): [num_total]
-                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique sets
+                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique group
                 preSum (torch.Tensor, dtype:int32): [num_unq+1]
-                max_cnt (int32): maximum number of feats in unique sets
-                num_unq (int32): number of unique sets
+                preSum32 (torch.Tensor, dtype:int32): [num_unq+1]
+                max_cnt (int32): maximum number of feats in unique groups
+                num_unq (int32): number of unique groups
         """
 
         sum_value = scatter_sum(feats, data)
@@ -120,10 +123,11 @@ class ScatterMaxFunction(Function):
             feats (torch.Tensor, dtype:float32): [num_total, channel]
             data (class ScatterMeta):
                 unq_inv (torch.Tensor, dtype:int32): [num_total]
-                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique sets
+                unq_cnts (torch.Tensor): [num_unq] number of feats in each unique group
                 preSum (torch.Tensor, dtype:int32): [num_unq+1]
-                max_cnt (int32): maximum number of feats in unique sets
-                num_unq (int32): number of unique sets
+                preSum32 (torch.Tensor, dtype:int32): [num_unq+1]
+                max_cnt (int32): maximum number of feats in unique groups
+                num_unq (int32): number of unique groups
         """
         num_unq = data.num_unq
         channel = feats.shape[1]
@@ -154,7 +158,7 @@ class GetPreSumFunction(Function):
         """
         if unq_inv.dtype != torch.int32:
             unq_inv = unq_inv.int()
-        # unq_inv[-1] is the last index of unique sets, +2 means one more than number of the sets
+        # unq_inv[-1] is the last index of unique groups, +2 means one more than number of the sets
         num_unq = unq_inv[-1] + 2
         preSum = unq_inv.new_zeros(num_unq)
         scatter_ext.getPreSum(unq_inv, preSum)
@@ -167,8 +171,31 @@ class GetPreSumFunction(Function):
     def backward(ctx, g):
         return None
 
+class GetPreSum32Function(Function):
+
+    @staticmethod
+    def forward(ctx, unq_cnts: torch.Tensor):
+        """getPreSum32 function forward from unq_cnts, in which the number of each unique group is padded to 32 times.
+        Args:
+            unq_cnts (torch.Tensor, dtype:int32): [num_unq]
+        """
+        if unq_cnts.dtype != torch.int32:
+            unq_cnts = unq_cnts.int()
+        num_unq = unq_cnts.shape[0]
+        unq_cnts32 = unq_cnts.new_zeros(num_unq)
+        scatter_ext.getUnqCnts32(unq_cnts, unq_cnts32)
+        preSum32 = unq_cnts.new_zeros(num_unq+1)
+        preSum32[1:] = unq_cnts32.cumsum(0)
+        ctx.mark_non_differentiable(preSum32)
+
+        return preSum32
+
+    @staticmethod
+    def backward(ctx, g):
+        return None
 
 scatter_sum = ScatterSumFunction.apply
 scatter_mean = ScatterMeanFunction.apply
 scatter_max = ScatterMaxFunction.apply
 getPreSum = GetPreSumFunction.apply
+getPreSum32 = GetPreSum32Function.apply
