@@ -3,10 +3,12 @@ import torch
 from torch import nn as nn
 from torch.autograd import Function
 import scatter_ext
+from .timer import TorchTimer
+timer = TorchTimer(100)
 
 
 class ScatterMeta:
-    def __init__(self, unq_coors, unq_inv, unq_cnts) -> None:
+    def __init__(self, unq_coors, unq_inv, unq_cnts, version='v3') -> None:
         assert unq_inv.ndim in (
             1, 2), f"unq_inv in ScatterMeta should be 1 or 2-dims, but got {unq_inv.ndim}-dims"
         assert unq_cnts.ndim in (
@@ -19,12 +21,14 @@ class ScatterMeta:
         else:
             self.unq_cnts = unq_cnts
         self.preSum = getPreSum(self._unq_inv_int)
-        self.preSum32 = getPreSum32(self.unq_cnts)
-        self.Idx2Unq = self.getIdx2Unq(self.preSum32)
         assert self.unq_inv.shape[0] == self.preSum[-1]
         self.max_cnt = self.unq_cnts.max().item()
         self.num_unq = self.preSum.shape[0] - 1
-        self.blockDim = self.getBestBlockDim(self.preSum32[-1].item())
+
+        if version == 'v2':
+            self.preSum32 = getPreSum32(self.unq_cnts)
+            self.Idx2Unq = self.getIdx2Unq(self.preSum32)
+            self.blockDim = self.getBestBlockDim(self.preSum32[-1].item())
 
     def getIdx2Unq(self, preSum32):
         Idx2Unq = preSum32.new_zeros(preSum32[-1])
