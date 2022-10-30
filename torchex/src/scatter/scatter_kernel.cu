@@ -1,4 +1,5 @@
 #include "../utils/error.cuh"
+#include "../utils/functions.cuh"
 #include "../utils/timer.cuh"
 #include <assert.h>
 #include <cfloat>
@@ -10,18 +11,6 @@
 #define THREADS_PER_BLOCK 256
 #define WARP_SIZE 32
 #define DIVUP(m, n) ((m + n - 1) / n)
-
-__forceinline__ int up_2n(int n) {
-    if (n == 1)
-        return 1;
-    int temp = n - 1;
-    temp |= temp >> 1;
-    temp |= temp >> 2;
-    temp |= temp >> 4;
-    temp |= temp >> 8;
-    temp |= temp >> 16;
-    return temp + 1;
-}
 
 template <typename T>
 __device__ inline T warpReduceSum(T sum, int blockSize) {
@@ -99,6 +88,12 @@ __global__ void getPreSum(const int *const unq_inv, int *const preSum, int n) {
         preSum[groupIdx[tid] + 1] = i + 1;
 }
 
+__global__ void getUnqCnts32(const int *const unq_cnts, int *const unq_cnts_32, int n) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    if (i < n)
+        unq_cnts_32[i] = DIVUP(unq_cnts[i], 32) * 32;
+}
+
 __global__ void scatter_sum(const float *const d_feats, const int *const d_preSum, float *const d_out, int num_unq, int num_dim) {
     int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
     int tid = threadIdx.x;
@@ -124,6 +119,39 @@ __global__ void scatter_sum(const float *const d_feats, const int *const d_preSu
     if (warpIdx == 0)
         sum = warpReduceSum(sum, num_valid_warp);
     if (tid == 0 && unq_idx < num_unq) {
+        d_out[unq_idx * num_dim + dim] = sum;
+    }
+}
+
+__global__ void scatter_sumV2(const float *const d_feats, const int *const d_preSum, const int *const d_preSum32, const int *const d_Idx2Unq,
+                              float *const d_out, int num_total, int num_total32, int num_unq, int num_dim) {
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int dim = threadIdx.y + blockIdx.y * blockDim.y;
+    float sum = 0;
+    int unq = -1;
+    if (dim < num_dim) {
+        if (i < num_total32) {
+            unq = d_Idx2Unq[i];
+            int delta = i - d_preSum32[unq];
+            int true_idx = delta + d_preSum[unq];
+            sum = (true_idx < d_preSum[unq + 1]) ? d_feats[dim * num_total + true_idx] : 0;
+        }
+        sum = warpReduceSum(sum, blockDim.x);
+        int laneIdx = threadIdx.x & (WARP_SIZE - 1);
+        if (i < num_total32 && laneIdx == 0)
+            atomicAdd(&d_out[dim * num_unq + unq], sum);
+    }
+}
+
+__global__ void scatter_sumV3(const float *const d_feats, const int *const d_preSum, float *const d_out, int num_unq, int num_dim) {
+    int dim = threadIdx.x + blockIdx.x * blockDim.x;
+    int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
+    if (dim < num_dim && unq_idx < num_unq) {
+        int begin = d_preSum[unq_idx], end = d_preSum[unq_idx + 1];
+        float sum = 0;
+        for (int feat_idx = begin; feat_idx < end; feat_idx++) {
+            sum += d_feats[feat_idx * num_dim + dim];
+        }
         d_out[unq_idx * num_dim + dim] = sum;
     }
 }
@@ -170,8 +198,32 @@ __global__ void scatter_max(const float *const d_feats, const int *const d_preSu
     }
 }
 
+__global__ void scatter_maxV3(const float *const d_feats, const int *const d_preSum, float *const d_out, int *const d_arg, int num_unq, int num_dim) {
+    int dim = threadIdx.x + blockIdx.x * blockDim.x;
+    int unq_idx = threadIdx.y + blockIdx.y * blockDim.y;
+    if (dim < num_dim && unq_idx < num_unq) {
+        int begin = d_preSum[unq_idx], end = d_preSum[unq_idx + 1];
+        float max_value = -FLT_MAX;
+        float temp_feat;
+        int max_idx = -1;
+        for (int feat_idx = begin; feat_idx < end; feat_idx++) {
+            temp_feat = d_feats[feat_idx * num_dim + dim];
+            if (temp_feat > max_value) {
+                max_value = temp_feat;
+                max_idx = feat_idx;
+            }
+        }
+        d_out[unq_idx * num_dim + dim] = max_value;
+        d_arg[unq_idx * num_dim + dim] = max_idx;
+    }
+}
+
 void getPreSum_launcher(const int *const unq_inv, int *const preSum, int num_total) {
     getPreSum<<<DIVUP(num_total, THREADS_PER_BLOCK), THREADS_PER_BLOCK, THREADS_PER_BLOCK * sizeof(int)>>>(unq_inv, preSum, num_total);
+}
+
+void getUnqCnts32_launcher(const int *const unq_cnts, int *const unq_cnts32, int num_unq) {
+    getUnqCnts32<<<DIVUP(num_unq, THREADS_PER_BLOCK), THREADS_PER_BLOCK>>>(unq_cnts, unq_cnts32, num_unq);
 }
 
 void scatter_sum_launcher(const float *const feats, const int *const preSum, float *const out,
@@ -182,6 +234,20 @@ void scatter_sum_launcher(const float *const feats, const int *const preSum, flo
     scatter_sum<<<gridSize, blockSize, blockSize.y * DIVUP(max_2n, WARP_SIZE) * sizeof(float)>>>(feats, preSum, out, num_unq, channel);
 }
 
+void scatter_sumV2_launcher(const float *const feats, const int *const preSum, const int *const preSum32, const int *const Idx2Unq,
+                            float *const out, int num_total, int num_total32, int num_unq, int channel, int blockDim_x) {
+    dim3 blockSize(blockDim_x, DIVUP(MAX_THREADS, blockDim_x));
+    dim3 gridSize(DIVUP(num_total32, blockDim_x), DIVUP(channel, blockSize.y));
+    scatter_sumV2<<<gridSize, blockSize>>>(feats, preSum, preSum32, Idx2Unq, out, num_total, num_total32, num_unq, channel);
+}
+
+void scatter_sumV3_launcher(const float *const feats, const int *const preSum, float *const out,
+                            int channel, int num_unq) {
+    dim3 blockSize(128, MAX_THREADS / 128);
+    dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq, blockSize.y));
+    scatter_sumV3<<<gridSize, blockSize>>>(feats, preSum, out, num_unq, channel);
+}
+
 void scatter_max_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq, int max_cnt) {
     int max_2n = max(min(up_2n(max_cnt), MAX_THREADS), 32);
@@ -189,6 +255,13 @@ void scatter_max_launcher(const float *const feats, const int *const preSum, flo
     dim3 gridSize(channel, DIVUP(num_unq, blockSize.y));
     int shared_mem = blockSize.y * DIVUP(max_2n, WARP_SIZE) * (sizeof(float) + sizeof(int));
     scatter_max<<<gridSize, blockSize, shared_mem>>>(feats, preSum, out, arg, num_unq, channel);
+}
+
+void scatter_maxV3_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
+                          int channel, int num_unq) {
+    dim3 blockSize(128, MAX_THREADS / 128);
+    dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq, blockSize.y));
+    scatter_maxV3<<<gridSize, blockSize>>>(feats, preSum, out, arg, num_unq, channel);
 }
 
 // void read_file(std::string filename, std::vector<int> &array, int num_cols) {

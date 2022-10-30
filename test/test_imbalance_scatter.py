@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torch_scatter
-from torchex import scatter_sum, scatter_max, scatter_mean, TorchTimer, ScatterMeta
+from torchex import scatter_sum, scatter_sumV2, scatter_sumV3, scatter_max, scatter_maxV3, scatter_mean, scatter_meanV3, TorchTimer, ScatterMeta
 from torchex.operator_py.scatter_op import get_sorted_group_inds
 from ipdb import set_trace
 import random
@@ -13,7 +13,7 @@ np.random.seed(0)
 random.seed(0)
 
 
-def check_method(feat, coors, mode='sum'):
+def check_method(feat, coors, mode='sum', version=1):
     unq_coors, unq_inv, unq_cnts = torch.unique_consecutive(coors, return_inverse=True, return_counts=True, dim=0)
     meta = ScatterMeta(unq_coors, unq_inv, unq_cnts)
     assert mode in ['sum', 'mean', 'max']
@@ -29,21 +29,39 @@ def check_method(feat, coors, mode='sum'):
 
     with timer_torchex.timing(f'Torchex.scatter_{str(mode)}'):
         if mode == 'sum':
-            ans2 = scatter_sum(feat, meta)
+            if version == 1:
+                ans2 = scatter_sum(feat, meta)
+            elif version == 2:
+                ans2 = scatter_sumV2(feat, meta)
+            else:
+                ans2 = scatter_sumV3(feat, meta)
         elif mode == 'mean':
-            ans2 = scatter_mean(feat, meta)
+            if version == 1:
+                ans2 = scatter_mean(feat, meta)
+            elif version == 2:
+                raise KeyError("scatter_meanV2 has not been defined")
+            else:
+                ans2 = scatter_meanV3(feat, meta)
         else:
-            ans2, arg2 = scatter_max(feat, meta)
+            if version == 1:
+                ans2, arg2 = scatter_max(feat, meta)
+            elif version == 2:
+                raise KeyError("scatter_maxV2 has not been defined")
+            else:
+                ans2, arg2 = scatter_maxV3(feat, meta)
 
     flag1 = torch.isclose(ans1, ans2).all()
 
     if mode == 'max':
-        flag2 = (arg1 == arg2).all()
+        unq_idx, dim = torch.where(arg1 != arg2)
+        idx1 = arg1[unq_idx, dim]
+        idx2 = arg2[unq_idx, dim].long()
+        flag2 = torch.isclose(feat[idx1, dim], feat[idx2, dim]).all()
     else:
         flag2 = True
     
-    # if not flag2:
-    #     print('Indices Error')
+    if not flag2:
+        print('Indices Error')
         # set_trace()
     if not flag1:
         print('Value Error')
@@ -54,6 +72,8 @@ if __name__ == '__main__':
     device = torch.device("cuda:0")
     mode = 'max'
     size = random.randint(1, 10000)
+    version = 3
+    # version: 1 means initial version, 2 means padded version, 3 means lastest version
     # C = random.randint(1, 1000)
 
     for C in [64, 1000]:
@@ -68,4 +88,4 @@ if __name__ == '__main__':
 
             feats = torch.rand(size, C, dtype=torch.float).to(device)
 
-            check_method(feats, coors, mode='max')
+            check_method(feats, coors, mode=mode, version=version)
