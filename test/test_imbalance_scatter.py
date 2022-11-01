@@ -13,10 +13,10 @@ np.random.seed(0)
 random.seed(0)
 
 
-def check_method(feat, coors, mode='sum', version=1):
+def check_method(feat, coors, mode='sum', version=1, train=False):
     assert version in [1,2,3], "version should be in [1,2,3]"
     unq_coors, unq_inv, unq_cnts = torch.unique_consecutive(coors, return_inverse=True, return_counts=True, dim=0)
-    meta = ScatterMeta(unq_coors, unq_inv, unq_cnts, version)
+    meta = ScatterMeta(unq_coors, unq_inv, unq_cnts, version, train=train)
     assert mode in ['sum', 'mean', 'max']
 
     with timer_torch_scatter.timing(f'torch_scatter.scatter_{str(mode)}'):
@@ -53,7 +53,7 @@ def check_method(feat, coors, mode='sum', version=1):
 
     flag1 = torch.isclose(ans1, ans2).all()
 
-    if mode == 'max':
+    if mode == 'max' and arg2 is not None:
         unq_idx, dim = torch.where(arg1 != arg2)
         idx1 = arg1[unq_idx, dim]
         idx2 = arg2[unq_idx, dim].long()
@@ -80,13 +80,13 @@ if __name__ == '__main__':
     for C in [64, 1000]:
         print(f'******** Test channels {C} ********')
         for i in range(10):
-            coors_x = torch.randint(0, 10, (size,))
-            coors_y = torch.randint(0, 10, (size,))
-            coors_z = torch.randint(0, 10, (size,))
+            coors_x = torch.randint(0, 2, (size,))
+            coors_y = torch.randint(0, 2, (size,))
+            coors_z = torch.randint(0, 2, (size,))
             coors = torch.stack([coors_x, coors_y, coors_z], dim=1).int().to(device)
             coors[:2000] = 0
             coors, order = get_sorted_group_inds(coors)
 
             feats = torch.rand(size, C, dtype=torch.float).to(device)
 
-            check_method(feats, coors, mode=mode, version=version)
+            check_method(feats, coors, mode=mode, version=version, train=False)

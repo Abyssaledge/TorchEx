@@ -217,7 +217,7 @@ __global__ void scatter_max(const float *const d_feats, const int *const d_preSu
 }
 
 __global__ void scatter_maxV3_infer(const float *const d_feats, const int *const d_preSum_extend, const int *const d_UnqIdx, float *const d_out,
-                              float *const d_temp_max, int *const d_temp_arg, int num_unq_extend, int num_dim) {
+                              int num_unq_extend, int num_dim) {
     int dim = threadIdx.x + blockIdx.x * blockDim.x;
     int Idx_y = threadIdx.y + blockIdx.y * blockDim.y;
     if (dim < num_dim && Idx_y < num_unq_extend) {
@@ -233,20 +233,7 @@ __global__ void scatter_maxV3_infer(const float *const d_feats, const int *const
                 max_idx = feat_idx;
             }
         }
-        d_temp_max[Idx_y * num_dim + dim] = max_value;
-        d_temp_arg[Idx_y * num_dim + dim] = max_idx;
         atomicMaxFloat(&d_out[unq_idx * num_dim + dim], max_value);
-    }
-}
-
-__global__ void scatter_argmaxV3_infer(const int *const d_UnqIdx, const float *const d_temp_max, const int *const d_temp_arg, const float *const d_out, int *const d_arg,
-                                 int num_unq_extend, int num_dim) {
-    int dim = threadIdx.x + blockIdx.x * blockDim.x;
-    int Idx_y = threadIdx.y + blockIdx.y * blockDim.y;
-    if (dim < num_dim && Idx_y < num_unq_extend) {
-        int unq_idx = d_UnqIdx[Idx_y];
-        if (fabs(d_temp_max[Idx_y * num_dim + dim] - d_out[unq_idx * num_dim + dim]) < FLT_EPSILON)
-            d_arg[unq_idx * num_dim + dim] = d_temp_arg[Idx_y * num_dim + dim];
     }
 }
 
@@ -314,25 +301,18 @@ void scatter_max_launcher(const float *const feats, const int *const preSum, flo
     scatter_max<<<gridSize, blockSize, shared_mem>>>(feats, preSum, out, arg, num_unq, channel);
 }
 
-void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out, int *const arg,
+void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out,
                             int channel, int num_unq_extend) {
-    float *temp_max;
-    int *temp_argmax;
-    int max_mem = num_unq_extend * channel * sizeof(float), argmax_mem = num_unq_extend * channel * sizeof(int);
-    CHECK_CALL(cudaMalloc(&temp_max, max_mem));
-    CHECK_CALL(cudaMalloc(&temp_argmax, argmax_mem));
     int num_dim = min(DIVUP(channel, 32) * 32, 128);
     dim3 blockSize(num_dim, MAX_THREADS / num_dim);
     dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq_extend, blockSize.y));
-    scatter_maxV3_infer<<<gridSize, blockSize>>>(feats, preSum_extend, UnqIdx, out, temp_max, temp_argmax, num_unq_extend, channel);
-    scatter_argmaxV3_infer<<<gridSize, blockSize>>>(UnqIdx, temp_max, temp_argmax, out, arg, num_unq_extend, channel);
-    CHECK_CALL(cudaFree(temp_max));
-    CHECK_CALL(cudaFree(temp_argmax));
+    scatter_maxV3_infer<<<gridSize, blockSize>>>(feats, preSum_extend, UnqIdx, out, num_unq_extend, channel);
 }
 
 void scatter_maxV3_train_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq) {
-    dim3 blockSize(128, MAX_THREADS / 128);
+    int num_dim = min(DIVUP(channel, 32) * 32, 128);
+    dim3 blockSize(num_dim, MAX_THREADS / num_dim);
     dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq, blockSize.y));
     scatter_maxV3_train<<<gridSize, blockSize>>>(feats, preSum, out, arg, num_unq, channel);
 }
