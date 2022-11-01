@@ -8,11 +8,12 @@ timer = TorchTimer(100)
 
 
 class ScatterMeta:
-    def __init__(self, unq_coors, unq_inv, unq_cnts, version=3) -> None:
+    def __init__(self, unq_coors, unq_inv, unq_cnts, version=3, train=False) -> None:
         assert unq_inv.ndim in (
             1, 2), f"unq_inv in ScatterMeta should be 1 or 2-dims, but got {unq_inv.ndim}-dims"
         assert unq_cnts.ndim in (
             1, 2), f"unq_cnts in ScatterMeta should be 1 or 2-dims, but got {unq_cnts.ndim}-dims"
+        self.training = train
         self.unq_inv = unq_inv.long()
         self._unq_inv_int = unq_inv.int()
         self.unq_coors = unq_coors
@@ -21,9 +22,9 @@ class ScatterMeta:
         else:
             self.unq_cnts = unq_cnts
         self.num_unq = self.unq_cnts.shape[0]
-
-        self.preSum = getPreSum(self._unq_inv_int)
-        assert self.unq_inv.shape[0] == self.preSum[-1]
+        if version != 3 or self.training:
+            self.preSum = getPreSum(self._unq_inv_int)
+            assert self.unq_inv.shape[0] == self.preSum[-1]
 
         if version == 1:
             self.max_cnt = self.unq_cnts.max().item()
@@ -33,7 +34,7 @@ class ScatterMeta:
             self.Idx2Unq = self.getIdx2Unq(self.preSum32)
             self.blockDim = self.getBestBlockDim(self.preSum32[-1].item())
         
-        if version == 3:
+        if version == 3 and not self.training:
             self.UnqIdx, self.preSum_extend = divideUnqCnts(self.unq_cnts, max_cnt=128)
             assert(self.preSum_extend[-1] == self.unq_inv.shape[0])
 
@@ -307,21 +308,29 @@ class ScatterMaxV3Function(Function):
         num_unq = meta.num_unq
         channel = feats.shape[1]
         out = feats.new_zeros((num_unq, channel))-1e10
-        arg = meta._unq_inv_int.new_zeros((num_unq, channel))
-        # scatter_ext.maxV3_infer(feats, meta.preSum_extend, meta.UnqIdx, out, arg)
-        scatter_ext.maxV3_train(feats, meta.preSum, out, arg)
-        ctx.save_for_backward(arg)
-        ctx.mark_non_differentiable(arg)
+        ctx.training = meta.training
         ctx.shape = feats.shape
+        arg = None
+        if meta.training:
+            arg = meta._unq_inv_int.new_zeros((num_unq, channel))
+            scatter_ext.maxV3_train(feats, meta.preSum, out, arg)
+            ctx.mark_non_differentiable(arg)
+            ctx.save_for_backward(arg)
+        else:
+            scatter_ext.maxV3_infer(feats, meta.preSum_extend, meta.UnqIdx, out)
+            ctx.mark_non_differentiable(out)
         return out, arg
 
     @staticmethod
     def backward(ctx, g_out, g_arg):
-        arg = ctx.saved_tensors
-        g_input = g_out.new_zeros(ctx.shape)
-        arg = arg.long()
-        g_input.scatter_(0, arg, g_out)
-        return g_input, None
+        if ctx.training:
+            arg = ctx.saved_tensors
+            g_input = g_out.new_zeros(ctx.shape)
+            arg = arg.long()
+            g_input.scatter_(0, arg, g_out)
+            return g_input, None
+        else:
+            return None, None
 
 
 class GetPreSumFunction(Function):
