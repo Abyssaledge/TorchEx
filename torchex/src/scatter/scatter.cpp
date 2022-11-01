@@ -21,11 +21,11 @@ void scatter_sumV3_launcher(const float *const feats, const int *const preSum_ex
 void scatter_max_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq, int max_cnt);
 
-void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out, int *const arg,
-                            int channel, int num_unq_extend);
+void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out,
+                                  int channel, int num_unq_extend);
 
 void scatter_maxV3_train_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
-                          int channel, int num_unq);
+                                  int channel, int num_unq);
 
 void getPreSum_launcher(const int *const unq_inv, int *const preSum, int num_total);
 
@@ -114,21 +114,18 @@ void scatter_maxV3_infer_gpu(
     at::Tensor feats,
     at::Tensor preSum,
     at::Tensor UnqIdx,
-    at::Tensor out,
-    at::Tensor arg) {
+    at::Tensor out) {
     CHECK_INPUT(feats);
     CHECK_INPUT(preSum);
     CHECK_INPUT(UnqIdx);
     CHECK_INPUT(out);
-    CHECK_INPUT(arg);
     int channel = feats.size(1);
     int num_unq_extend = UnqIdx.size(0);
     const float *feats_data = feats.data_ptr<float>();
     const int *preSum_data = preSum.data_ptr<int>();
     const int *UnqIdx_data = UnqIdx.data_ptr<int>();
     float *out_data = out.data_ptr<float>();
-    int *arg_data = arg.data_ptr<int>();
-    scatter_maxV3_infer_launcher(feats_data, preSum_data, UnqIdx_data, out_data, arg_data, channel, num_unq_extend);
+    scatter_maxV3_infer_launcher(feats_data, preSum_data, UnqIdx_data, out_data, channel, num_unq_extend);
 }
 
 void scatter_maxV3_train_gpu(
