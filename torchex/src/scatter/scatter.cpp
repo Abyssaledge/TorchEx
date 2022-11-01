@@ -15,18 +15,23 @@ void scatter_sum_launcher(const float *const feats, const int *const preSum, flo
 void scatter_sumV2_launcher(const float *const feats, const int *const preSum, const int *const preSum32, const int *const Idx2Unq,
                             float *const out, int num_total, int num_total32, int num_unq, int channel, int blockDim_x);
 
-void scatter_sumV3_launcher(const float *const feats, const int *const preSum, float *const out,
-                            int channel, int num_unq);
+void scatter_sumV3_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out,
+                            int channel, int num_unq_extend);
 
 void scatter_max_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq, int max_cnt);
 
-void scatter_maxV3_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
+void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out, int *const arg,
+                            int channel, int num_unq_extend);
+
+void scatter_maxV3_train_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq);
 
 void getPreSum_launcher(const int *const unq_inv, int *const preSum, int num_total);
 
 void getUnqCnts32_launcher(const int *const unq_cnts, int *const unq_cnts32, int num_unq);
+
+void getUnqIdx_launcher(const int *const last_idx, int *const UnqIdx, int num_unq);
 
 void scatter_sum_gpu(
     at::Tensor feats,
@@ -70,17 +75,20 @@ void scatter_sumV2_gpu(
 
 void scatter_sumV3_gpu(
     at::Tensor feats,
-    at::Tensor preSum,
+    at::Tensor preSum_extend,
+    at::Tensor UnqIdx,
     at::Tensor out) {
     CHECK_INPUT(feats);
-    CHECK_INPUT(preSum);
+    CHECK_INPUT(preSum_extend);
+    CHECK_INPUT(UnqIdx);
     CHECK_INPUT(out);
     int channel = feats.size(1);
-    int num_unq = out.size(0);
+    int num_unq_extend = UnqIdx.size(0);
     const float *feats_data = feats.data_ptr<float>();
-    const int *preSum_data = preSum.data_ptr<int>();
+    const int *preSum_data = preSum_extend.data_ptr<int>();
+    const int *UnqIdx_data = UnqIdx.data_ptr<int>();
     float *out_data = out.data_ptr<float>();
-    scatter_sumV3_launcher(feats_data, preSum_data, out_data, channel, num_unq);
+    scatter_sumV3_launcher(feats_data, preSum_data, UnqIdx_data, out_data, channel, num_unq_extend);
 }
 
 void scatter_max_gpu(
@@ -102,7 +110,28 @@ void scatter_max_gpu(
     scatter_max_launcher(feats_data, preSum_data, out_data, arg_data, channel, num_unq, max_cnt);
 }
 
-void scatter_maxV3_gpu(
+void scatter_maxV3_infer_gpu(
+    at::Tensor feats,
+    at::Tensor preSum,
+    at::Tensor UnqIdx,
+    at::Tensor out,
+    at::Tensor arg) {
+    CHECK_INPUT(feats);
+    CHECK_INPUT(preSum);
+    CHECK_INPUT(UnqIdx);
+    CHECK_INPUT(out);
+    CHECK_INPUT(arg);
+    int channel = feats.size(1);
+    int num_unq_extend = UnqIdx.size(0);
+    const float *feats_data = feats.data_ptr<float>();
+    const int *preSum_data = preSum.data_ptr<int>();
+    const int *UnqIdx_data = UnqIdx.data_ptr<int>();
+    float *out_data = out.data_ptr<float>();
+    int *arg_data = arg.data_ptr<int>();
+    scatter_maxV3_infer_launcher(feats_data, preSum_data, UnqIdx_data, out_data, arg_data, channel, num_unq_extend);
+}
+
+void scatter_maxV3_train_gpu(
     at::Tensor feats,
     at::Tensor preSum,
     at::Tensor out,
@@ -117,7 +146,7 @@ void scatter_maxV3_gpu(
     const int *preSum_data = preSum.data_ptr<int>();
     float *out_data = out.data_ptr<float>();
     int *arg_data = arg.data_ptr<int>();
-    scatter_maxV3_launcher(feats_data, preSum_data, out_data, arg_data, channel, num_unq);
+    scatter_maxV3_train_launcher(feats_data, preSum_data, out_data, arg_data, channel, num_unq);
 }
 
 void getPreSum_gpu(
@@ -142,12 +171,25 @@ void getUnqCnts32_gpu(
     getUnqCnts32_launcher(unq_cnts_data, unq_cnts32_data, num_unq);
 }
 
+void getUnqIdx_gpu(
+    at::Tensor last_idx,
+    at::Tensor UnqIdx) {
+    CHECK_INPUT(last_idx);
+    CHECK_INPUT(UnqIdx);
+    int num_unq = last_idx.size(0);
+    const int *last_idx_data = last_idx.data_ptr<int>();
+    int *UnqIdx_data = UnqIdx.data_ptr<int>();
+    getUnqIdx_launcher(last_idx_data, UnqIdx_data, num_unq);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("sum", &scatter_sum_gpu, "scatter_sum (CUDA)");
     m.def("sumV2", &scatter_sumV2_gpu, "scatter_sumV2 (CUDA)");
     m.def("sumV3", &scatter_sumV3_gpu, "scatter_sumV3 (CUDA)");
     m.def("max", &scatter_max_gpu, "scatter_max (CUDA)");
-    m.def("maxV3", &scatter_maxV3_gpu, "scatter_maxV3 (CUDA)");
+    m.def("maxV3_infer", &scatter_maxV3_infer_gpu, "scatter_maxV3 for inference(CUDA)");
+    m.def("maxV3_train", &scatter_maxV3_train_gpu, "scatter_maxV3 for training(CUDA)");
     m.def("getPreSum", &getPreSum_gpu, "get preSum from unq_inv (CUDA)");
     m.def("getUnqCnts32", &getUnqCnts32_gpu, "get unq_cnts32 from unq_cnts (CUDA)");
+    m.def("getUnqIdx", &getUnqIdx_gpu, "get UnqIdx from last_idx (CUDA)");
 }

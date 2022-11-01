@@ -14,8 +14,9 @@ random.seed(0)
 
 
 def check_method(feat, coors, mode='sum', version=1):
+    assert version in [1,2,3], "version should be in [1,2,3]"
     unq_coors, unq_inv, unq_cnts = torch.unique_consecutive(coors, return_inverse=True, return_counts=True, dim=0)
-    meta = ScatterMeta(unq_coors, unq_inv, unq_cnts)
+    meta = ScatterMeta(unq_coors, unq_inv, unq_cnts, version)
     assert mode in ['sum', 'mean', 'max']
 
     with timer_torch_scatter.timing(f'torch_scatter.scatter_{str(mode)}'):
