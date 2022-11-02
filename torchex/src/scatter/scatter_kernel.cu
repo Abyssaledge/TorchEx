@@ -287,7 +287,7 @@ void scatter_sumV2_launcher(const float *const feats, const int *const preSum, c
 void scatter_sumV3_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out,
                             int channel, int num_unq_extend) {
     int num_dim = min(DIVUP(channel, 32) * 32, 128);
-    dim3 blockSize(num_dim, MAX_THREADS / num_dim);
+    dim3 blockSize(num_dim);
     dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq_extend, blockSize.y));
     scatter_sumV3<<<gridSize, blockSize>>>(feats, preSum_extend, UnqIdx, out, num_unq_extend, channel);
 }
@@ -304,7 +304,7 @@ void scatter_max_launcher(const float *const feats, const int *const preSum, flo
 void scatter_maxV3_infer_launcher(const float *const feats, const int *const preSum_extend, const int *const UnqIdx, float *const out,
                             int channel, int num_unq_extend) {
     int num_dim = min(DIVUP(channel, 32) * 32, 128);
-    dim3 blockSize(num_dim, MAX_THREADS / num_dim);
+    dim3 blockSize(num_dim);
     dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq_extend, blockSize.y));
     scatter_maxV3_infer<<<gridSize, blockSize>>>(feats, preSum_extend, UnqIdx, out, num_unq_extend, channel);
 }
@@ -312,7 +312,7 @@ void scatter_maxV3_infer_launcher(const float *const feats, const int *const pre
 void scatter_maxV3_train_launcher(const float *const feats, const int *const preSum, float *const out, int *const arg,
                           int channel, int num_unq) {
     int num_dim = min(DIVUP(channel, 32) * 32, 128);
-    dim3 blockSize(num_dim, MAX_THREADS / num_dim);
+    dim3 blockSize(num_dim);
     dim3 gridSize(DIVUP(channel, blockSize.x), DIVUP(num_unq, blockSize.y));
     scatter_maxV3_train<<<gridSize, blockSize>>>(feats, preSum, out, arg, num_unq, channel);
 }

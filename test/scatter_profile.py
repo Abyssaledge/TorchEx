@@ -73,14 +73,14 @@ def check_method(feat, coors, mode='sum', version=1, train=False):
     mem = 0
     if mode == 'sum':
         mem = feats.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
-        mem = mem * 32 / 4 / (1024 ** 3)
+        mem = mem * 32 / 4 / (10 ** 9)
     elif mode == 'max':
         if meta.training:
             mem = feats.numel() + meta.preSum.numel() * 2 + arg.numel() + out.numel()
-            mem = mem * 32 / 4 / (1024 ** 3)
+            mem = mem * 32 / 4 / (10 ** 9)
         else:
             mem = feats.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
-            mem = mem * 32 / 4 / (1024 ** 3)
+            mem = mem * 32 / 4 / (10 ** 9)
     with timer_torchex.timing(f'Torchex.scatter_{mode}', mem=mem):
         if mode == 'sum':
             scatter_ext.sumV3(feats, meta.preSum_extend, meta.UnqIdx, out)
