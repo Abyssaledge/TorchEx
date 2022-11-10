@@ -6,7 +6,7 @@ from torchex.operator_py.scatter_op import get_sorted_group_inds
 from ipdb import set_trace
 import random
 
-freq = 5
+freq = 10
 timer_torch_scatter = TorchTimer(freq)
 timer_torchex = TorchTimer(freq)
 np.random.seed(0)
@@ -72,21 +72,36 @@ def check_method(feat, coors, mode='sum', version=1, train=False):
 if __name__ == '__main__':
     device = torch.device("cuda:0")
     mode = 'max'
-    size = random.randint(1, 10000)
-    version = 3
-    # version: 1 means initial version, 2 means padded version, 3 means lastest version
-    # C = random.randint(1, 1000)
+    imbalance_rate = 100
+    size_limits = [[1, 10],
+                [10, 10**2],
+                [10**2, 10**3],
+                [10**3, 10**4],
+                [10**4, 10**5]]
+    num_group = 100
+    if imbalance_rate > 1:
+        print('******** Imbalance Test ********')
+    else:
+        print('******** Balance Test ********')
+    for limit in size_limits:
+        print(f'******** Group Size Limit [{limit[0]}, {limit[1]}) ********')
+        version = 3
+        # version: 1 means initial version, 2 means padded version, 3 means lastest version
+        # C = random.randint(1, 1000)
 
-    for C in [64, 1000]:
-        print(f'******** Test channels {C} ********')
-        for i in range(10):
-            coors_x = torch.randint(0, 2, (size,))
-            coors_y = torch.randint(0, 2, (size,))
-            coors_z = torch.randint(0, 2, (size,))
-            coors = torch.stack([coors_x, coors_y, coors_z], dim=1).int().to(device)
-            coors[:2000] = 0
-            coors, order = get_sorted_group_inds(coors)
+        for C in [64, 128, 256, 512, 1024]:
+            print(f'******** Test channels {C} ********')
+            for i in range(10):
+                coors = []
+                for group_idx in range(num_group):
+                    if random.random() < 1/10:
+                        coors += [group_idx]*random.randint(limit[0]*imbalance_rate, limit[1]*imbalance_rate)
+                    else:
+                        coors += [group_idx]*random.randint(limit[0], limit[1])
+                coors = torch.tensor(coors).int().to(device)
+                # coors[:2000] = 0
+                coors, order = get_sorted_group_inds(coors)
 
-            feats = torch.rand(size, C, dtype=torch.float).to(device)
+                feats = torch.rand(len(coors), C, dtype=torch.float).to(device)
 
-            check_method(feats, coors, mode=mode, version=version, train=False)
+                check_method(feats, coors, mode=mode, version=version, train=False)
