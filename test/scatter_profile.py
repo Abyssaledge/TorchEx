@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import scatter_ext
+import torch_scatter
 from torchex import scatter_sum, scatter_sumV2, scatter_sumV3, scatter_max, scatter_maxV3, scatter_mean, scatter_meanV3, TorchTimer, ScatterMeta
 from torchex.operator_py.scatter_op import get_sorted_group_inds
 from ipdb import set_trace
@@ -53,6 +54,7 @@ class Bandwidth(object):
         return self.timer_dict[name]
 
 freq = 5
+timer_torch_scatter = Bandwidth(freq)
 timer_torchex = Bandwidth(freq)
 np.random.seed(0)
 random.seed(0)
@@ -65,38 +67,49 @@ def check_method(feat, coors, mode='sum', version=1, train=False):
     assert mode in ['sum', 'mean', 'max']
 
     num_unq = meta.num_unq
-    channel = feats.shape[1]
-    out = feats.new_zeros((num_unq, channel))-1e10
+    channel = feat.shape[1]
+    out = feat.new_zeros((num_unq, channel))-1e10
     if mode == 'max' and meta.training:
         arg = meta._unq_inv_int.new_zeros((num_unq, channel))
 
     mem = 0
     if mode == 'sum':
-        mem = feats.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
-        mem = mem * 32 / 4 / (10 ** 9)
+        mem = feat.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
+        mem = mem * 4 / (10 ** 9)
     elif mode == 'max':
         if meta.training:
-            mem = feats.numel() + meta.preSum.numel() * 2 + arg.numel() + out.numel()
-            mem = mem * 32 / 4 / (10 ** 9)
+            mem = feat.numel() + meta.preSum.numel() * 2 + arg.numel() + out.numel()
+            mem = mem * 4 / (10 ** 9)
         else:
-            mem = feats.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
-            mem = mem * 32 / 4 / (10 ** 9)
+            mem = feat.numel() + meta.preSum_extend.numel() * 2 + meta.UnqIdx.numel() + out.numel()
+            mem = mem * 4 / (10 ** 9)
     with timer_torchex.timing(f'Torchex.scatter_{mode}', mem=mem):
         if mode == 'sum':
-            scatter_ext.sumV3(feats, meta.preSum_extend, meta.UnqIdx, out)
+            scatter_ext.sumV3(feat, meta.preSum_extend, meta.UnqIdx, out)
         elif mode == 'mean':
             raise KeyError("No need for scatter_mean")
         else:
             if meta.training:
-                scatter_ext.maxV3_train(feats, meta.preSum, out, arg)
+                scatter_ext.maxV3_train(feat, meta.preSum, out, arg)
             else:
-                scatter_ext.maxV3_infer(feats, meta.preSum_extend, meta.UnqIdx, out)
+                scatter_ext.maxV3_infer(feat, meta.preSum_extend, meta.UnqIdx, out)
+    
+    mem = feat.numel() + unq_inv.numel() + out.numel()
+    mem = mem * 4 / (10 ** 9)
+    with timer_torch_scatter.timing(f'torch_scatter.scatter_{str(mode)}', mem=mem):
+        if mode == 'sum':
+            ans1 = torch_scatter.scatter(
+                feat, unq_inv, dim=0, reduce="sum")
+        elif mode == 'mean':
+            ans1 = torch_scatter.scatter_mean(feat, unq_inv, dim=0)
+        else:
+            ans1, arg1 = torch_scatter.scatter_max(feat, unq_inv, dim=0)
 
 
 if __name__ == '__main__':
     device = torch.device("cuda:0")
     mode = 'max'
-    size = random.randint(1, 10000)
+    size = random.randint(100000, 500000)
     version = 3
     # version: 1 means initial version, 2 means padded version, 3 means lastest version
     # C = random.randint(1, 1000)
