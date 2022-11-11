@@ -10,7 +10,7 @@ timer = TorchTimer(100)
 class ScatterMeta:
     def __init__(self, unq_coors, unq_inv, unq_cnts, version=3, train=False) -> None:
         assert unq_inv.ndim in (
-            1, 2), f"unq_inv in ScatterMeta should be 1 or 2-dims, but got {unq_inv.ndim}-dims"
+            1, 2), f"unq_inv in ScatterData should be 1 or 2-dims, but got {unq_inv.ndim}-dims"
         assert unq_cnts.ndim in (
             1, 2), f"unq_cnts in ScatterMeta should be 1 or 2-dims, but got {unq_cnts.ndim}-dims"
         self.training = train
@@ -285,7 +285,7 @@ class ScatterMaxFunction(Function):
     def backward(ctx, g_out, g_arg):
         arg = ctx.saved_tensors
         g_input = g_out.new_zeros(ctx.shape)
-        arg = arg.long()
+        arg = arg.type(torch.int64)
         g_input.scatter_(0, arg, g_out)
         return g_input, None
 
