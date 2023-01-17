@@ -41,6 +41,11 @@ setup(
             'scatter_ext',
             ['./torchex/src/scatter/scatter.cpp',
              './torchex/src/scatter/scatter_kernel.cu']
+        ),
+        CUDAExtension(
+            'codec',
+            ['./torchex/src/mask_codec/codec.cpp',
+             './torchex/src/mask_codec/codec_kernel.cu']
         )
     ],
     cmdclass={
