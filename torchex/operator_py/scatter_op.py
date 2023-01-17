@@ -5,6 +5,7 @@ from torch.autograd import Function
 import scatter_ext
 from .timer import TorchTimer
 timer = TorchTimer(100)
+from ipdb import set_trace
 
 
 class ScatterMeta:
@@ -64,7 +65,7 @@ def get_sorted_group_inds(inds):
     """
     simple way for fast develope
     """
-    _inds = inds.clone()
+    _inds = inds
     if inds.ndim == 1:
         dims = 1
     else:
@@ -310,7 +311,6 @@ class ScatterMaxV3Function(Function):
         out = feats.new_zeros((num_unq, channel))-1e10
         ctx.training = meta.training
         ctx.shape = feats.shape
-        arg = None
         if meta.training:
             arg = meta._unq_inv_int.new_zeros((num_unq, channel))
             scatter_ext.maxV3_train(feats, meta.preSum, out, arg)
@@ -319,7 +319,7 @@ class ScatterMaxV3Function(Function):
         else:
             scatter_ext.maxV3_infer(feats, meta.preSum_extend, meta.UnqIdx, out)
             ctx.mark_non_differentiable(out)
-        return out, arg
+        return out
 
     @staticmethod
     def backward(ctx, g_out, g_arg):
