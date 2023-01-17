@@ -5,5 +5,6 @@ from .connected_components_op import connected_components
 # from .incremental_points import incremental_points_mask
 from .scatter_op import scatter_sum, scatter_mean, scatter_max, ScatterData
 from .group_fps_op import group_fps
+from .codec_op import mask_encoder, mask_decoder
 __all__ = ['dynamic_point_pool', 'TorchTimer', 'ingroup_inds', 'connected_components', 'scatter_sum', 'scatter_mean',
-           'scatter_max', 'ScatterData']
+           'scatter_max', 'ScatterData', 'mask_encoder', 'mask_decoder']
