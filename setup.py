@@ -46,6 +46,11 @@ setup(
             'codec',
             ['./torchex/src/mask_codec/codec.cpp',
              './torchex/src/mask_codec/codec_kernel.cu']
+        ),
+        CUDAExtension(
+            'iou3d_cuda',
+            ['./torchex/src/iou3d/iou3d.cpp',
+             './torchex/src/iou3d/iou3d_kernel.cu']
         )
     ],
     cmdclass={
