@@ -8,7 +8,7 @@ try:
 except ImportError:
     dynamic_point_pool_ext = None
     print('Can not import dynamic pool ext')
-from ipdb import set_trace
+
 
 
 class DynamicPointPoolFunction(Function):
