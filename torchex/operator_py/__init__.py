@@ -7,7 +7,9 @@ from .scatter_op import scatter_sum, scatter_mean, scatter_max, ScatterData
 from .group_fps_op import group_fps
 from .codec_op import mask_encoder, mask_decoder
 from .iou3d_op import boxes_iou_bev, boxes_iou_bev_1to1, nms_gpu, nms_normal_gpu, nms_mixed_gpu, aug_nms_gpu
+from .chamfer_distance_op import chamfer_distance
+
 
 __all__ = ['dynamic_point_pool', 'TorchTimer', 'ingroup_inds', 'connected_components', 'scatter_sum', 'scatter_mean',
            'scatter_max', 'ScatterData', 'mask_encoder', 'mask_decoder', 'boxes_iou_bev', 'boxes_iou_bev_1to1', 
-           'nms_gpu', 'nms_normal_gpu', 'nms_mixed_gpu', 'aug_nms_gpu']
+           'nms_gpu', 'nms_normal_gpu', 'nms_mixed_gpu', 'aug_nms_gpu','chamfer_distance']

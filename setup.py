@@ -51,9 +51,15 @@ setup(
             'iou3d_cuda',
             ['./torchex/src/iou3d/iou3d.cpp',
              './torchex/src/iou3d/iou3d_kernel.cu']
+        ),
+        CUDAExtension(
+            'chamfer_distance_cuda',
+            ["./torchex/src/chamfer_distance/chamfer_distance.cpp",
+            "./torchex/src/chamfer_distance/chamfer_distance_kernel.cu"]
         )
     ],
     cmdclass={
         'build_ext': BuildExtension
     }
 )
+
