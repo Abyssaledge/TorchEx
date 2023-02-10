@@ -3,7 +3,7 @@ from torch import nn as nn
 from torch.autograd import Function
 import group_fps_ext
 from .timer import TorchTimer
-# from ipdb import set_trace
+from ipdb import set_trace
 timer = TorchTimer(10)
 
 class GroupFPSFunction(Function):
