@@ -313,6 +313,20 @@ __global__ void boxes_iou_bev_1to1_kernel(const int num, const float *boxes_a,
   ans_iou[idx] = cur_iou_bev;
 }
 
+__global__ void boxes_overlap_1to1_kernel(const int num, const float *boxes_a,
+                                          const float *boxes_b, float *ans_overlap) {
+  const int idx = blockIdx.x * THREADS_PER_BLOCK + threadIdx.x;
+
+  if (idx >= num) {
+    return;
+  }
+
+  const float *cur_box_a = boxes_a + idx * 5;
+  const float *cur_box_b = boxes_b + idx * 5;
+  float s_overlap = box_overlap(cur_box_a, cur_box_b);
+  ans_overlap[idx] = s_overlap;
+}
+
 __global__ void nms_kernel(const int boxes_num, const float nms_overlap_thresh,
                            const float *boxes, unsigned long long *mask) {
   // params: boxes (N, 5) [x1, y1, x2, y2, ry]
@@ -535,6 +549,14 @@ void boxesioubev1to1Launcher(const int num, const float *boxes_a,
   dim3 threads(THREADS_PER_BLOCK);
 
   boxes_iou_bev_1to1_kernel<<<blocks, threads>>>(num, boxes_a, boxes_b, ans_iou);
+}
+
+void boxesOverlap1to1Launcher(const int num, const float *boxes_a,
+                             const float *boxes_b, float *ans_overlap) {
+  dim3 blocks(DIVUP(num, THREADS_PER_BLOCK));
+  dim3 threads(THREADS_PER_BLOCK);
+
+  boxes_overlap_1to1_kernel<<<blocks, threads>>>(num, boxes_a, boxes_b, ans_overlap);
 }
 
 void nmsLauncher(const float *boxes, unsigned long long *mask, int boxes_num,

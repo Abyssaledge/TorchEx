@@ -45,6 +45,23 @@ def boxes_iou_bev_1to1(boxes_a, boxes_b):
 
     return ans_iou
 
+def boxes_overlap_1to1(boxes_a, boxes_b):
+    """Calculate boxes IoU in the bird view.
+
+    Args:
+        boxes_a (torch.Tensor): Input boxes a with shape (N, 5).
+        boxes_b (torch.Tensor): Input boxes b with shape (N, 5).
+
+    Returns:
+        ans_iou (torch.Tensor): IoU result with shape (N, ).
+    """
+    assert boxes_a.shape[0] == boxes_b.shape[0]
+    ans_overlap = boxes_a.new_zeros(boxes_a.shape[0])
+
+    iou3d_cuda.boxes_overlap_1to1_gpu(boxes_a.contiguous(), boxes_b.contiguous(), ans_overlap)
+
+    return ans_overlap
+
 def nms_gpu(boxes, scores, thresh, pre_maxsize=None, post_max_size=None):
     """Nms function with gpu implementation.
 

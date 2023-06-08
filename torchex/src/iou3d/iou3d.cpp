@@ -47,6 +47,8 @@ void boxesioubevLauncher(const int num_a, const float *boxes_a, const int num_b,
                          const float *boxes_b, float *ans_iou);
 void boxesioubev1to1Launcher(const int num, const float *boxes_a,
                              const float *boxes_b, float *ans_iou);
+void boxesOverlap1to1Launcher(const int num, const float *boxes_a,
+                             const float *boxes_b, float *ans_overlap);
 void nmsLauncher(const float *boxes, unsigned long long *mask, int boxes_num,
                  float nms_overlap_thresh);
 void nmsNormalLauncher(const float *boxes, unsigned long long *mask,
@@ -146,6 +148,27 @@ int boxes_iou_bev_1to1_gpu(at::Tensor boxes_a, at::Tensor boxes_b,
   float *ans_iou_data = ans_iou.data_ptr<float>();
 
   boxesioubev1to1Launcher(num, boxes_a_data, boxes_b_data, ans_iou_data);
+
+  return 1;
+}
+
+int boxes_overlap_1to1_gpu(at::Tensor boxes_a, at::Tensor boxes_b,
+                      at::Tensor ans_overlap) {
+  // params boxes_a: (N, 5) [x1, y1, x2, y2, ry]
+  // params boxes_b: (N, 5)
+  // params ans_overlap: (N, )
+
+  CHECK_INPUT(boxes_a);
+  CHECK_INPUT(boxes_b);
+  CHECK_INPUT(ans_overlap);
+
+  int num = boxes_a.size(0);
+
+  const float *boxes_a_data = boxes_a.data_ptr<float>();
+  const float *boxes_b_data = boxes_b.data_ptr<float>();
+  float *ans_overlap_data = ans_overlap.data_ptr<float>();
+
+  boxesOverlap1to1Launcher(num, boxes_a_data, boxes_b_data, ans_overlap_data);
 
   return 1;
 }
@@ -381,6 +404,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "oriented boxes overlap with mixed batches");
   m.def("boxes_iou_bev_gpu", &boxes_iou_bev_gpu, "oriented boxes iou");
   m.def("boxes_iou_bev_1to1_gpu", &boxes_iou_bev_1to1_gpu, "one to one boxes iou");
+  m.def("boxes_overlap_1to1_gpu", &boxes_overlap_1to1_gpu, "one to one boxes overlap");
   m.def("nms_gpu", &nms_gpu, "oriented nms gpu");
   m.def("nms_normal_gpu", &nms_normal_gpu, "nms gpu");
   m.def("nms_mixed_gpu", &nms_mixed_gpu, "nms_mixed (CUDA)");
