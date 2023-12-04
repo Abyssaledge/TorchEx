@@ -62,6 +62,11 @@ setup(
             ['./torchex/src/incremental_points/incremental_points.cpp',
              './torchex/src/incremental_points/incremental_points_kernel.cu',]
         ),
+        CUDAExtension(
+            'grid_hash_ext', 
+            ['./torchex/src/grid_hash/grid_hash.cpp',
+             './torchex/src/grid_hash/grid_hash_kernel.cu',]
+        ),
     ],
     cmdclass={
         'build_ext': BuildExtension
