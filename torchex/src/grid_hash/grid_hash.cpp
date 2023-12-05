@@ -15,6 +15,7 @@
 
 void build_hash_table_launcher(
     const int *coors_ptr,
+    const int *values_ptr,
     int *table_ptr,
     int table_size,
     int N
@@ -41,16 +42,19 @@ __inline__ int up_2n(int n){
 
 
 torch::Tensor build_hash_table(
-  torch::Tensor coors
+  torch::Tensor coors,
+  torch::Tensor values
 );
 
 torch::Tensor build_hash_table(
-  torch::Tensor coors
+  torch::Tensor coors,
+  torch::Tensor values
 ) {
 
   CHECK_INPUT(coors);
   int N = coors.size(0);
   assert (coors.ndimension() == 1);
+  assert (N == values.size(0));
 
   auto int_opts = coors.options().dtype(torch::kInt32);
   int table_size = up_2n(N);
@@ -59,10 +63,12 @@ torch::Tensor build_hash_table(
 
 
   const int *coors_ptr = coors.data_ptr<int>();
+  const int *values_ptr = values.data_ptr<int>();
   int *table_ptr = table.data_ptr<int>();
 
   build_hash_table_launcher(
       coors_ptr,
+      values_ptr,
       table_ptr,
       table_size,
       N

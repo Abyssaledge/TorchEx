@@ -12,12 +12,13 @@
 #define THREADS_PER_BLOCK 256
 #define DIVUP(m, n) ((m) / (n) + ((m) % (n) > 0))
 
-#define DEBUG
+// #define DEBUG
 // #define ASSERTION
 
 
 __global__ void build_hash_table_kernel(
     const int *keys,
+    const int *values,
     int *table,
     int table_size,
     int N
@@ -26,7 +27,8 @@ __global__ void build_hash_table_kernel(
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= N) return;
   int key = keys[idx];
-  setvalue(key, idx, table, table_size);
+  int value = values[idx];
+  setvalue(key, value, table, table_size);
 
 }
 
@@ -77,6 +79,7 @@ void probe_hash_table_launcher(
 
 void build_hash_table_launcher(
   const int *keys,
+  const int *values,
   int *table,
   int table_size,
   int N
@@ -88,6 +91,7 @@ void build_hash_table_launcher(
 
   build_hash_table_kernel<<<blocks, threads>>>(
       keys,
+      values,
       table,
       table_size,
       N

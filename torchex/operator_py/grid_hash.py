@@ -17,18 +17,18 @@ def _flatten_3dim_coors(coors, sizes):
 def _get_dim_size(coors):
 
     x, y, z = coors[:, 0], coors[:, 1], coors[:, 2]
-    x_size = x.max() + 1
-    y_size = y.max() + 1
-    z_size = z.max() + 1
+    x_size = x.max().item() + 1
+    y_size = y.max().item() + 1
+    z_size = z.max().item() + 1
     return x_size, y_size, z_size
 
 class _BuildHashTableFunction(Function):
 
     @staticmethod
-    def forward(ctx, coors):
+    def forward(ctx, coors, values):
 
         # unique the coors
-        table = grid_hash_ext.build_table(coors)
+        table = grid_hash_ext.build_table(coors, values)
         ctx.mark_non_differentiable(table)
 
         return table
@@ -73,10 +73,11 @@ class GridHash:
         if coors.dtype != torch.int32:
             coors = coors.int()
 
-        if debug:
-            assert (coors >= 0).all() and (coors < 2 ** 30).all()
+        # if debug:
+        #     assert (coors >= 0).all() and (coors < 2 ** 31).all()
 
-        self.table = grid_hash_build(coors)
+        values = torch.arange(len(coors), device=coors.device, dtype=coors.dtype)
+        self.table = grid_hash_build(coors, values)
         print(len(self.table))
         self.valid_mask = self.table[:, 0] != -1
         self.valid_table = self.table[self.valid_mask]

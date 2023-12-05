@@ -20,6 +20,8 @@ if __name__ == '__main__':
 
         # table = grid_hash_build(unq_coors)
         hasher = GridHash(coors, debug=True)
+        out = hasher.probe(unq_coors)
+        assert (out == torch.arange(len(out), device=out.device)).all()
         table = hasher.table
 
         valid_mask = hasher.valid_mask
